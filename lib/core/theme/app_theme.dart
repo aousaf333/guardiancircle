@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// A custom theme extension to provide premium design system colors and gradients
-/// inspired by Apple Find My, Life360, and modern glassmorphism.
 class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
   final Color glassBackground;
   final Color glassBorder;
@@ -10,6 +8,8 @@ class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
   final Color mapOverlayBackground;
   final double blurSigma;
   final Color activePulseColor;
+  final Color cardShadow;
+  final Color primaryGlow;
 
   const AppThemeExtension({
     required this.glassBackground,
@@ -18,6 +18,8 @@ class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
     required this.mapOverlayBackground,
     required this.blurSigma,
     required this.activePulseColor,
+    required this.cardShadow,
+    required this.primaryGlow,
   });
 
   @override
@@ -28,6 +30,8 @@ class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
     Color? mapOverlayBackground,
     double? blurSigma,
     Color? activePulseColor,
+    Color? cardShadow,
+    Color? primaryGlow,
   }) {
     return AppThemeExtension(
       glassBackground: glassBackground ?? this.glassBackground,
@@ -36,6 +40,8 @@ class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
       mapOverlayBackground: mapOverlayBackground ?? this.mapOverlayBackground,
       blurSigma: blurSigma ?? this.blurSigma,
       activePulseColor: activePulseColor ?? this.activePulseColor,
+      cardShadow: cardShadow ?? this.cardShadow,
+      primaryGlow: primaryGlow ?? this.primaryGlow,
     );
   }
 
@@ -52,495 +58,277 @@ class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
       mapOverlayBackground: Color.lerp(mapOverlayBackground, other.mapOverlayBackground, t)!,
       blurSigma: lerpDouble(blurSigma, other.blurSigma, t),
       activePulseColor: Color.lerp(activePulseColor, other.activePulseColor, t)!,
+      cardShadow: Color.lerp(cardShadow, other.cardShadow, t)!,
+      primaryGlow: Color.lerp(primaryGlow, other.primaryGlow, t)!,
     );
   }
 
-  // Helper double interpolation for lerp
-  static double lerpDouble(double a, double b, double t) {
-    return a + (b - a) * t;
+  static double lerpDouble(double? a, double? b, double t) {
+    return a! + (b! - a) * t;
   }
 }
 
-/// Dynamic, ultra-premium theme configuration for GuardianCircle.
-/// Designed with Material 3, custom modern typography, rounded buttons, and premium dark/light color schemes.
 class AppTheme {
   AppTheme._();
 
-  // Premium Design System Colors
-  static const Color _lightPrimary = Color(0xFF0066FF); // Premium Electric Blue
-  static const Color _lightSecondary = Color(0xFF10B981); // Emerald Active Green
-  static const Color _lightTertiary = Color(0xFF8B5CF6); // Modern Royal Purple
-  static const Color _lightBackground = Color(0xFFF8FAFC); // Very light cool grey slate
+  static const Color primary = Color(0xFF2563EB);
+  static const Color accent = Color(0xFF06B6D4);
+  static const Color primaryLight = Color(0xFF60A5FA);
+  static const Color success = Color(0xFF10B981);
+  static const Color warning = Color(0xFFF59E0B);
+  static const Color danger = Color(0xFFEF4444);
+
+  static const Color _darkBg = Color(0xFF0F172A);
+  static const Color _darkSurface = Color(0xFF1E293B);
+  static const Color _darkSurfaceLight = Color(0xFF334155);
+  static const Color _darkOnSurface = Color(0xFFF1F5F9);
+
+  static const Color _lightBg = Color(0xFFF8FAFC);
   static const Color _lightSurface = Color(0xFFFFFFFF);
-  static const Color _lightOnSurface = Color(0xFF0F172A); // Midnight dark text
+  static const Color _lightOnSurface = Color(0xFF0F172A);
 
-  static const Color _darkPrimary = Color(0xFF3B82F6); // Soft Vibrant Blue for Dark Mode
-  static const Color _darkSecondary = Color(0xFF34D399); // Soft Emerald Green
-  static const Color _darkTertiary = Color(0xFFA78BFA); // Soft Royal Purple
-  static const Color _darkBackground = Color(0xFF0B0F19); // Deep dark space/navy blue
-  static const Color _darkSurface = Color(0xFF151D30); // Premium dark navy card surface
-  static const Color _darkOnSurface = Color(0xFFF8FAFC); // Light cool slate text
-
-  // Common Corner Radii
-  static const double cardRadius = 24.0;
-  static const double buttonRadius = 16.0;
+  static const double cardRadius = 20.0;
+  static const double buttonRadius = 14.0;
   static const double inputRadius = 14.0;
+  static const double chipRadius = 100.0;
 
-  /// Modern typography setup utilizing default system sans-serif fonts with precise spacing and weight.
-  static TextTheme _buildTextTheme(Color baseTextColor) {
+  static TextTheme _buildTextTheme(Color base) {
     return TextTheme(
-      displayLarge: TextStyle(
-        fontSize: 32.0,
-        fontWeight: FontWeight.w800,
-        letterSpacing: -1.0,
-        color: baseTextColor,
-      ),
-      displayMedium: TextStyle(
-        fontSize: 28.0,
-        fontWeight: FontWeight.w800,
-        letterSpacing: -0.8,
-        color: baseTextColor,
-      ),
-      displaySmall: TextStyle(
-        fontSize: 24.0,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.5,
-        color: baseTextColor,
-      ),
-      headlineLarge: TextStyle(
-        fontSize: 22.0,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.4,
-        color: baseTextColor,
-      ),
-      headlineMedium: TextStyle(
-        fontSize: 20.0,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.2,
-        color: baseTextColor,
-      ),
-      headlineSmall: TextStyle(
-        fontSize: 18.0,
-        fontWeight: FontWeight.w600,
-        color: baseTextColor,
-      ),
-      titleLarge: TextStyle(
-        fontSize: 17.0,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -0.1,
-        color: baseTextColor,
-      ),
-      titleMedium: TextStyle(
-        fontSize: 15.0,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -0.1,
-        color: baseTextColor,
-      ),
-      titleSmall: TextStyle(
-        fontSize: 14.0,
-        fontWeight: FontWeight.w500,
-        color: baseTextColor,
-      ),
-      bodyLarge: TextStyle(
-        fontSize: 16.0,
-        fontWeight: FontWeight.normal,
-        letterSpacing: 0.1,
-        height: 1.4,
-        color: baseTextColor,
-      ),
-      bodyMedium: TextStyle(
-        fontSize: 14.0,
-        fontWeight: FontWeight.normal,
-        letterSpacing: 0.1,
-        height: 1.4,
-        color: baseTextColor,
-      ),
-      bodySmall: TextStyle(
-        fontSize: 12.0,
-        fontWeight: FontWeight.normal,
-        letterSpacing: 0.1,
-        color: baseTextColor.withOpacity(0.7),
-      ),
-      labelLarge: TextStyle(
-        fontSize: 14.0,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.2,
-        color: baseTextColor,
-      ),
-      labelMedium: TextStyle(
-        fontSize: 12.0,
-        fontWeight: FontWeight.w500,
-        letterSpacing: 0.2,
-        color: baseTextColor,
-      ),
-      labelSmall: TextStyle(
-        fontSize: 10.0,
-        fontWeight: FontWeight.w500,
-        letterSpacing: 0.3,
-        color: baseTextColor.withOpacity(0.6),
-      ),
+      displayLarge: TextStyle(fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: -0.8, height: 1.15, color: base),
+      displayMedium: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: -0.6, height: 1.2, color: base),
+      displaySmall: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, letterSpacing: -0.4, height: 1.25, color: base),
+      headlineLarge: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, letterSpacing: -0.3, height: 1.25, color: base),
+      headlineMedium: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: -0.2, height: 1.3, color: base),
+      headlineSmall: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.1, height: 1.3, color: base),
+      titleLarge: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.1, height: 1.3, color: base),
+      titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: -0.1, height: 1.35, color: base),
+      titleSmall: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, letterSpacing: 0, height: 1.35, color: base),
+      bodyLarge: TextStyle(fontSize: 17, fontWeight: FontWeight.w400, letterSpacing: -0.1, height: 1.5, color: base),
+      bodyMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w400, letterSpacing: -0.1, height: 1.45, color: base),
+      bodySmall: TextStyle(fontSize: 13, fontWeight: FontWeight.w400, letterSpacing: 0, height: 1.4, color: base.withValues(alpha: 0.6)),
+      labelLarge: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: -0.1, color: base),
+      labelMedium: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, letterSpacing: 0, color: base),
+      labelSmall: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, letterSpacing: 0.1, color: base.withValues(alpha: 0.5)),
     );
   }
 
-  /// Premium Light Theme Specification
-  static ThemeData get lightTheme {
-    final ColorScheme colorScheme = const ColorScheme.light(
-      primary: _lightPrimary,
-      secondary: _lightSecondary,
-      tertiary: _lightTertiary,
-      background: _lightBackground,
-      surface: _lightSurface,
-      onPrimary: Colors.white,
-      onSecondary: Colors.white,
-      onTertiary: Colors.white,
-      onBackground: _lightOnSurface,
-      onSurface: _lightOnSurface,
-      error: Color(0xFFEF4444),
-      onError: Colors.white,
-    );
+  static final ColorScheme _darkColorScheme = ColorScheme.dark(
+    primary: primary,
+    onPrimary: Colors.white,
+    secondary: accent,
+    onSecondary: Colors.white,
+    tertiary: const Color(0xFF8B5CF6),
+    onTertiary: Colors.white,
+    surface: _darkSurface,
+    onSurface: _darkOnSurface,
+    surfaceContainer: _darkSurfaceLight,
+    error: danger,
+    onError: Colors.white,
+  );
 
+  static final ColorScheme _lightColorScheme = ColorScheme.light(
+    primary: primary,
+    onPrimary: Colors.white,
+    secondary: accent,
+    onSecondary: Colors.white,
+    tertiary: const Color(0xFF7C3AED),
+    onTertiary: Colors.white,
+    surface: _lightSurface,
+    onSurface: _lightOnSurface,
+    surfaceContainer: const Color(0xFFE2E8F0),
+    error: danger,
+    onError: Colors.white,
+  );
+
+  static ThemeData get lightTheme {
+    final cs = _lightColorScheme;
     return ThemeData(
       useMaterial3: true,
-      colorScheme: colorScheme,
       brightness: Brightness.light,
-      scaffoldBackgroundColor: colorScheme.background,
+      colorScheme: cs,
+      scaffoldBackgroundColor: _lightBg,
       textTheme: _buildTextTheme(_lightOnSurface),
-      
-      // Status bar style configuration
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        centerTitle: true,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
         iconTheme: IconThemeData(color: _lightOnSurface, size: 24),
-        actionsIconTheme: IconThemeData(color: _lightOnSurface, size: 24),
-        systemOverlayStyle: SystemUiOverlayStyle(
+        systemOverlayStyle: const SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
           statusBarIconBrightness: Brightness.dark,
           statusBarBrightness: Brightness.light,
         ),
-        titleTextStyle: TextStyle(
-          color: _lightOnSurface,
-          fontSize: 18,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.3,
-        ),
+        titleTextStyle: TextStyle(color: _lightOnSurface, fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.1),
       ),
-
-      // Premium rounded cards with very light shadow
-      cardTheme: CardTheme(
-        color: _lightSurface,
+      cardTheme: CardThemeData(
+        color: cs.surface,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(cardRadius),
-          side: BorderSide(
-            color: Colors.black.withOpacity(0.04),
-            width: 1.0,
-          ),
+          side: BorderSide(color: Colors.black.withValues(alpha: 0.06), width: 0.5),
         ),
-        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 0),
       ),
-
-      // Beautiful inputs with modern states
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: cs.surfaceContainer.withValues(alpha: 0.4),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: BorderSide(color: Colors.black.withOpacity(0.08)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: BorderSide(color: Colors.black.withOpacity(0.08)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: const BorderSide(color: _lightPrimary, width: 1.5),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
-        ),
-        labelStyle: TextStyle(color: _lightOnSurface.withOpacity(0.6), fontWeight: FontWeight.w500),
-        hintStyle: TextStyle(color: _lightOnSurface.withOpacity(0.4)),
-        prefixIconColor: _lightOnSurface.withOpacity(0.5),
-        suffixIconColor: _lightOnSurface.withOpacity(0.5),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: BorderSide.none),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: BorderSide.none),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: const BorderSide(color: primary, width: 1.5)),
+        errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: const BorderSide(color: danger, width: 1.5)),
+        focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: const BorderSide(color: danger, width: 1.5)),
+        labelStyle: TextStyle(color: _lightOnSurface.withValues(alpha: 0.5), fontWeight: FontWeight.w500),
+        hintStyle: TextStyle(color: _lightOnSurface.withValues(alpha: 0.35)),
+        prefixIconColor: _lightOnSurface.withValues(alpha: 0.4),
+        suffixIconColor: _lightOnSurface.withValues(alpha: 0.4),
       ),
-
-      // Elegant Button Styles
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: _lightPrimary,
+          backgroundColor: primary,
           foregroundColor: Colors.white,
           minimumSize: const Size.fromHeight(56),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(buttonRadius)),
           elevation: 0,
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.1),
-        ).copyWith(
-          overlayColor: MaterialStateProperty.resolveWith<Color?>(
-            (Set<MaterialState> states) {
-              if (states.contains(MaterialState.pressed)) return Colors.white.withOpacity(0.12);
-              return null;
-            },
-          ),
+          shadowColor: Colors.transparent,
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: -0.1),
         ),
       ),
-
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: _lightPrimary,
+          foregroundColor: primary,
           minimumSize: const Size.fromHeight(56),
-          side: const BorderSide(color: _lightPrimary, width: 1.5),
+          side: BorderSide(color: primary.withValues(alpha: 0.3), width: 1.5),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(buttonRadius)),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
       ),
-
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: _lightPrimary,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          foregroundColor: primary,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
       ),
-
-      // Modern Tab Bar
-      tabBarTheme: TabBarTheme(
-        labelColor: _lightPrimary,
-        unselectedLabelColor: _lightOnSurface.withOpacity(0.5),
-        indicatorColor: _lightPrimary,
-        indicatorSize: TabBarIndicatorSize.tab,
-        labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        unselectedLabelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: _lightOnSurface,
+        contentTextStyle: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-
-      // Minimal Bottom Navigation
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: _lightSurface,
-        indicatorColor: _lightPrimary.withOpacity(0.1),
-        iconTheme: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
-            return const IconThemeData(color: _lightPrimary);
-          }
-          return IconThemeData(color: _lightOnSurface.withOpacity(0.5));
-        }),
-        labelTextStyle: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
-            return const TextStyle(color: _lightPrimary, fontSize: 12, fontWeight: FontWeight.w600);
-          }
-          return TextStyle(color: _lightOnSurface.withOpacity(0.5), fontSize: 12, fontWeight: FontWeight.w500);
-        }),
-        elevation: 8,
-        height: 64,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      dividerTheme: DividerThemeData(color: Colors.black.withValues(alpha: 0.06), thickness: 0.5, space: 0),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : Colors.white),
+        trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? primary : cs.surfaceContainer),
       ),
-
-      // Floating Action Button
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: _lightPrimary,
-        foregroundColor: Colors.white,
-        elevation: 4,
-        shape: CircleBorder(),
-      ),
-
-      // Custom extensions for Find My-style overlays
       extensions: <ThemeExtension<dynamic>>[
         AppThemeExtension(
-          glassBackground: Colors.white.withOpacity(0.75),
-          glassBorder: Colors.white.withOpacity(0.4),
-          backgroundGradient: const [
-            Color(0xFFE2E8F0),
-            Color(0xFFF1F5F9),
-          ],
-          mapOverlayBackground: Colors.white.withOpacity(0.9),
-          blurSigma: 15.0,
-          activePulseColor: _lightPrimary.withOpacity(0.2),
+          glassBackground: Colors.white.withValues(alpha: 0.7),
+          glassBorder: Colors.white.withValues(alpha: 0.4),
+          backgroundGradient: const [_lightBg, Color(0xFFE2E8F0)],
+          mapOverlayBackground: Colors.white.withValues(alpha: 0.9),
+          blurSigma: 20.0,
+          activePulseColor: primary.withValues(alpha: 0.12),
+          cardShadow: Colors.black.withValues(alpha: 0.04),
+          primaryGlow: primary.withValues(alpha: 0.15),
         ),
       ],
     );
   }
 
-  /// Premium Dark Theme Specification
   static ThemeData get darkTheme {
-    final ColorScheme colorScheme = const ColorScheme.dark(
-      primary: _darkPrimary,
-      secondary: _darkSecondary,
-      tertiary: _darkTertiary,
-      background: _darkBackground,
-      surface: _darkSurface,
-      onPrimary: Colors.white,
-      onSecondary: Colors.white,
-      onTertiary: Colors.white,
-      onBackground: _darkOnSurface,
-      onSurface: _darkOnSurface,
-      error: Color(0xFFEF4444),
-      onError: Colors.white,
-    );
-
+    final cs = _darkColorScheme;
     return ThemeData(
       useMaterial3: true,
-      colorScheme: colorScheme,
       brightness: Brightness.dark,
-      scaffoldBackgroundColor: colorScheme.background,
+      colorScheme: cs,
+      scaffoldBackgroundColor: _darkBg,
       textTheme: _buildTextTheme(_darkOnSurface),
-      
-      // Status bar style configuration
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        centerTitle: true,
-        iconTheme: IconThemeData(color: _darkOnSurface, size: 24),
-        actionsIconTheme: IconThemeData(color: _darkOnSurface, size: 24),
-        systemOverlayStyle: SystemUiOverlayStyle(
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        iconTheme: const IconThemeData(color: _darkOnSurface, size: 24),
+        systemOverlayStyle: const SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
           statusBarIconBrightness: Brightness.light,
           statusBarBrightness: Brightness.dark,
         ),
-        titleTextStyle: TextStyle(
-          color: _darkOnSurface,
-          fontSize: 18,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.3,
-        ),
+        titleTextStyle: const TextStyle(color: _darkOnSurface, fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.1),
       ),
-
-      // Premium rounded cards with subtle borders
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: _darkSurface,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(cardRadius),
-          side: BorderSide(
-            color: Colors.white.withOpacity(0.06),
-            width: 1.0,
-          ),
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.06), width: 0.5),
         ),
-        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 0),
       ),
-
-      // Beautiful inputs with modern dark states
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: _darkSurface,
+        fillColor: _darkSurfaceLight.withValues(alpha: 0.5),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: const BorderSide(color: _darkPrimary, width: 1.5),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(inputRadius),
-          borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
-        ),
-        labelStyle: TextStyle(color: _darkOnSurface.withOpacity(0.6), fontWeight: FontWeight.w500),
-        hintStyle: TextStyle(color: _darkOnSurface.withOpacity(0.4)),
-        prefixIconColor: _darkOnSurface.withOpacity(0.5),
-        suffixIconColor: _darkOnSurface.withOpacity(0.5),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: BorderSide.none),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: BorderSide.none),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: const BorderSide(color: primary, width: 1.5)),
+        errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: const BorderSide(color: danger, width: 1.5)),
+        focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(inputRadius), borderSide: const BorderSide(color: danger, width: 1.5)),
+        labelStyle: TextStyle(color: _darkOnSurface.withValues(alpha: 0.5), fontWeight: FontWeight.w500),
+        hintStyle: TextStyle(color: _darkOnSurface.withValues(alpha: 0.3)),
+        prefixIconColor: _darkOnSurface.withValues(alpha: 0.4),
+        suffixIconColor: _darkOnSurface.withValues(alpha: 0.4),
       ),
-
-      // Elegant Button Styles
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: _darkPrimary,
+          backgroundColor: primary,
           foregroundColor: Colors.white,
           minimumSize: const Size.fromHeight(56),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(buttonRadius)),
           elevation: 0,
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.1),
-        ).copyWith(
-          overlayColor: MaterialStateProperty.resolveWith<Color?>(
-            (Set<MaterialState> states) {
-              if (states.contains(MaterialState.pressed)) return Colors.white.withOpacity(0.12);
-              return null;
-            },
-          ),
+          shadowColor: Colors.transparent,
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: -0.1),
         ),
       ),
-
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: _darkPrimary,
+          foregroundColor: primary,
           minimumSize: const Size.fromHeight(56),
-          side: const BorderSide(color: _darkPrimary, width: 1.5),
+          side: BorderSide(color: primary.withValues(alpha: 0.3), width: 1.5),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(buttonRadius)),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
       ),
-
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: _darkPrimary,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          foregroundColor: primary,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
       ),
-
-      // Modern Tab Bar
-      tabBarTheme: TabBarTheme(
-        labelColor: _darkPrimary,
-        unselectedLabelColor: _darkOnSurface.withOpacity(0.5),
-        indicatorColor: _darkPrimary,
-        indicatorSize: TabBarIndicatorSize.tab,
-        labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        unselectedLabelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: _darkSurfaceLight,
+        contentTextStyle: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-
-      // Minimal Bottom Navigation
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: _darkSurface,
-        indicatorColor: _darkPrimary.withOpacity(0.15),
-        iconTheme: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
-            return const IconThemeData(color: _darkPrimary);
-          }
-          return IconThemeData(color: _darkOnSurface.withOpacity(0.5));
-        }),
-        labelTextStyle: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
-            return const TextStyle(color: _darkPrimary, fontSize: 12, fontWeight: FontWeight.w600);
-          }
-          return TextStyle(color: _darkOnSurface.withOpacity(0.5), fontSize: 12, fontWeight: FontWeight.w500);
-        }),
-        elevation: 8,
-        height: 64,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      dividerTheme: DividerThemeData(color: Colors.white.withValues(alpha: 0.06), thickness: 0.5, space: 0),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : Colors.white),
+        trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? primary : _darkSurfaceLight),
       ),
-
-      // Floating Action Button
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: _darkPrimary,
-        foregroundColor: Colors.white,
-        elevation: 4,
-        shape: CircleBorder(),
-      ),
-
-      // Custom extensions for Find My-style overlays (blurs, dark mode gradients)
       extensions: <ThemeExtension<dynamic>>[
         AppThemeExtension(
-          glassBackground: const Color(0xFF151D30).withOpacity(0.70),
-          glassBorder: Colors.white.withOpacity(0.08),
-          backgroundGradient: const [
-            Color(0xFF0F172A),
-            Color(0xFF020617),
-          ],
-          mapOverlayBackground: const Color(0xFF0B0F19).withOpacity(0.85),
-          blurSigma: 20.0,
-          activePulseColor: _darkPrimary.withOpacity(0.25),
+          glassBackground: _darkSurface.withValues(alpha: 0.6),
+          glassBorder: Colors.white.withValues(alpha: 0.08),
+          backgroundGradient: const [_darkBg, Color(0xFF0B1120)],
+          mapOverlayBackground: _darkBg.withValues(alpha: 0.85),
+          blurSigma: 24.0,
+          activePulseColor: primary.withValues(alpha: 0.18),
+          cardShadow: Colors.black.withValues(alpha: 0.3),
+          primaryGlow: primary.withValues(alpha: 0.2),
         ),
       ],
     );

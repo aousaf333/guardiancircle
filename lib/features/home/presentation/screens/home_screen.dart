@@ -1,17 +1,426 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:guardiancircle/app/auth_service.dart';
+import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/shared/widgets/glass_card.dart';
+import 'package:guardiancircle/shared/widgets/section_header.dart';
+import 'package:guardiancircle/shared/widgets/quick_action_tile.dart';
+import 'package:guardiancircle/shared/widgets/activity_tile.dart';
+import 'package:guardiancircle/shared/widgets/sos_button.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  late final AuthService _authService;
+  late final AnimationController _fadeController;
+  late final AnimationController _slideController;
+  late final Animation<double> _fadeAnim;
+  late final List<Animation<Offset>> _slideAnims;
+
+  @override
+  void initState() {
+    super.initState();
+    _authService = AuthService.defaultClient();
+    _fadeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+    _slideController = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+    _fadeAnim = CurvedAnimation(parent: _fadeController, curve: Curves.easeOutCubic);
+    _slideAnims = List.generate(6, (i) {
+      final start = (i * 0.08).clamp(0.0, 1.0);
+      final end = (start + 0.5).clamp(0.0, 1.0);
+      return Tween<Offset>(begin: const Offset(0, 0.12), end: Offset.zero).animate(CurvedAnimation(parent: _slideController, curve: Interval(start, end, curve: Curves.easeOutCubic)));
+    });
+    _fadeController.forward();
+    _slideController.forward();
+  }
+
+  @override
+  void dispose() {
+    _fadeController.dispose();
+    _slideController.dispose();
+    super.dispose();
+  }
+
+  String get _greeting {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  String get _userName {
+    final user = _authService.currentUser;
+    if (user == null) return 'there';
+    final meta = user.userMetadata;
+    if (meta != null && meta['full_name'] != null) return (meta['full_name'] as String).split(' ').first;
+    if (user.email != null) return user.email!.split('@').first;
+    return 'there';
+  }
+
+  String get _userInitial {
+    final user = _authService.currentUser;
+    if (user == null) return '?';
+    final meta = user.userMetadata;
+    if (meta != null && meta['full_name'] != null) return (meta['full_name'] as String).characters.first.toUpperCase();
+    if (user.email != null) return user.email!.characters.first.toUpperCase();
+    return '?';
+  }
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: Text(
-          'Home Screen',
-          style: TextStyle(fontSize: 24),
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final ext = theme.extension<AppThemeExtension>() ?? const AppThemeExtension(
+      glassBackground: Color(0xFF1E293B), glassBorder: Color(0x14FFFFFF), backgroundGradient: [Color(0xFF0F172A), Color(0xFF1E293B)],
+      mapOverlayBackground: Color(0xF20F172A), blurSigma: 24.0, activePulseColor: Color(0x332563EB), cardShadow: Color(0x4D000000), primaryGlow: Color(0x332563EB),
+    );
+
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: LinearGradient(colors: ext.backgroundGradient, begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fadeAnim,
+            child: CustomScrollView(
+              physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+              slivers: [
+                SliverToBoxAdapter(child: _buildAppBar(theme, cs)),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[0], child: _buildWelcomeCard(theme, cs))),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[1], child: _buildLocationCard(theme, cs))),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[2], child: SosButton(onPressed: () => _showSosConfirmation(context, theme)))),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[3], child: _buildFamilyCard(theme, cs))),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[4], child: SectionHeader(title: 'Quick Actions', actionText: 'Customize', onAction: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Customization coming soon')))))),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[4], child: _buildQuickActions(cs))),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[5], child: SectionHeader(title: 'Recent Activity', actionText: 'See All', onAction: () => context.push('/history')))),
+                SliverToBoxAdapter(child: _SlideIn(animation: _slideAnims[5], child: _buildRecentActivity(theme))),
+                const SliverToBoxAdapter(child: SizedBox(height: 100)),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
+
+  Widget _buildAppBar(ThemeData theme, ColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+      child: Row(
+        children: [
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(_greeting, style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurface.withValues(alpha: 0.45), fontWeight: FontWeight.w400)),
+            const SizedBox(height: 2),
+            Text(_userName, style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.5)),
+          ]),
+          const Spacer(),
+          _AppBarIcon(icon: Icons.notifications_active_outlined, onTap: () => context.push('/notifications')),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: () => context.push('/settings'),
+            child: Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [cs.primary, cs.secondary]),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [BoxShadow(color: cs.primary.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
+              ),
+              child: Center(child: Text(_userInitial, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18))),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWelcomeCard(ThemeData theme, ColorScheme cs) {
+    return GlassCard(
+      padding: const EdgeInsets.all(20),
+      child: Row(children: [
+        Container(
+          width: 52, height: 52,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [cs.primary.withValues(alpha: 0.2), cs.secondary.withValues(alpha: 0.1)]),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(Icons.shield_rounded, color: cs.primary, size: 28),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Your circle is safe', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 3),
+            Text('All 4 members are online and nearby', style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.5))),
+          ]),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: const Color(0xFF10B981).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(width: 7, height: 7, decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Color(0x8010B981), blurRadius: 4)])),
+            const SizedBox(width: 5),
+            const Text('Active', style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w700, fontSize: 12)),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildLocationCard(ThemeData theme, ColorScheme cs) {
+    final isDark = theme.brightness == Brightness.dark;
+    return GlassCard(
+      padding: EdgeInsets.zero,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          height: 140, width: double.infinity,
+          margin: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: LinearGradient(colors: isDark ? [const Color(0xFF1A2744), const Color(0xFF0F1B33)] : [const Color(0xFFE8F0FE), const Color(0xFFD4E4FA)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          ),
+          child: Stack(children: [
+            CustomPaint(size: const Size(double.infinity, 140), painter: _MapGridPainter(color: cs.primary.withValues(alpha: isDark ? 0.06 : 0.08))),
+            Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Container(
+                  width: 44, height: 44,
+                  decoration: BoxDecoration(color: cs.primary, shape: BoxShape.circle, boxShadow: [BoxShadow(color: cs.primary.withValues(alpha: 0.4), blurRadius: 20, spreadRadius: 2)]),
+                  child: const Icon(Icons.person_pin_circle_rounded, color: Colors.white, size: 26),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: isDark ? const Color(0xFF1E293B) : Colors.white, borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 8)]),
+                  child: Text('You', style: theme.textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w700)),
+                ),
+              ]),
+            ),
+            Positioned(
+              top: 12, left: 12,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(color: isDark ? Colors.black.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.85), borderRadius: BorderRadius.circular(10)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.location_on, size: 14, color: cs.primary),
+                      const SizedBox(width: 4),
+                      Text('Downtown, NYC', style: theme.textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
+                    ]),
+                  ),
+                ),
+              ),
+            ),
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(children: [
+            Icon(Icons.place_rounded, size: 18, color: cs.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Current Location', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text('123 Main St, New York, NY', style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.5))),
+              ]),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: cs.primary.withValues(alpha: isDark ? 0.15 : 0.08), borderRadius: BorderRadius.circular(8)),
+              child: Text('Updated 2m ago', style: TextStyle(color: cs.primary, fontWeight: FontWeight.w600, fontSize: 10)),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildFamilyCard(ThemeData theme, ColorScheme cs) {
+    final members = [
+      _FamilyMember('Sarah', 'Mom', const Color(0xFFEC4899), true),
+      _FamilyMember('James', 'Dad', const Color(0xFF3B82F6), true),
+      _FamilyMember('Emma', 'Sister', const Color(0xFF8B5CF6), false),
+      _FamilyMember('You', 'Me', cs.primary, true),
+    ];
+
+    return GlassCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Family Circle', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: const Color(0xFF10B981).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+              child: Text('${members.where((m) => m.isOnline).length}/${members.length} online', style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w700, fontSize: 12)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: members.map((member) => Column(mainAxisSize: MainAxisSize.min, children: [
+            Stack(children: [
+              Container(
+                width: 54, height: 54,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [member.color, member.color.withValues(alpha: 0.7)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [BoxShadow(color: member.color.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
+                ),
+                child: Center(child: Text(member.name.characters.first, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 20))),
+              ),
+              Positioned(
+                right: 0, bottom: 0,
+                child: Container(
+                  width: 14, height: 14,
+                  decoration: BoxDecoration(
+                    color: member.isOnline ? const Color(0xFF10B981) : cs.onSurface.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFF0F172A), width: 2.5),
+                    boxShadow: member.isOnline ? [const BoxShadow(color: Color(0x8010B981), blurRadius: 6)] : null,
+                  ),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Text(member.name, style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 2),
+            Text(member.role, style: theme.textTheme.labelSmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.4))),
+          ])).toList(),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildQuickActions(ColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Row(children: [
+        Expanded(child: QuickActionTile(icon: Icons.share_location_rounded, label: 'Share\nLocation', color: cs.primary, onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location sharing started'))))),
+        const SizedBox(width: 12),
+        Expanded(child: QuickActionTile(icon: Icons.chat_bubble_rounded, label: 'Family\nChat', color: cs.secondary, onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Family chat coming soon'))))),
+        const SizedBox(width: 12),
+        Expanded(child: QuickActionTile(icon: Icons.check_circle_outline_rounded, label: 'Safe\nCheck-in', color: const Color(0xFF10B981), onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Safe check-in sent!'))))),
+        const SizedBox(width: 12),
+        Expanded(child: QuickActionTile(icon: Icons.history_rounded, label: 'Location\nHistory', color: const Color(0xFFF59E0B), onTap: () => context.push('/history'))),
+      ]),
+    );
+  }
+
+  Widget _buildRecentActivity(ThemeData theme) {
+    return Column(children: [
+      ActivityTile(icon: Icons.location_on_rounded, iconColor: Theme.of(context).colorScheme.primary, title: 'Sarah arrived home', subtitle: '123 Main St, New York', time: '10m ago', onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Viewing Sarah\'s location')))),
+      ActivityTile(icon: Icons.check_circle_rounded, iconColor: const Color(0xFF10B981), title: 'James checked in', subtitle: 'Central Park, NYC', time: '25m ago', onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Viewing James\'s location')))),
+      ActivityTile(icon: Icons.warning_amber_rounded, iconColor: const Color(0xFFF59E0B), title: 'Low battery alert', subtitle: 'Emma\'s phone at 15%', time: '1h ago', onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Battery details')))),
+      ActivityTile(icon: Icons.login_rounded, iconColor: Theme.of(context).colorScheme.tertiary, title: 'You joined the circle', subtitle: 'Welcome to GuardianCircle!', time: '3h ago', onTap: () => context.push('/profile')),
+    ]);
+  }
+
+  void _showSosConfirmation(BuildContext context, ThemeData theme) {
+    final cs = theme.colorScheme;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        margin: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 40, offset: const Offset(0, -10))],
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 28),
+          Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(color: const Color(0xFFEF4444).withValues(alpha: 0.1), shape: BoxShape.circle),
+            child: const Icon(Icons.warning_rounded, color: Color(0xFFEF4444), size: 36),
+          ),
+          const SizedBox(height: 20),
+          Text('Send SOS Alert?', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Text('All family members will be notified of your emergency and your live location will be shared.', textAlign: TextAlign.center, style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurface.withValues(alpha: 0.5), height: 1.5)),
+          const SizedBox(height: 28),
+          GestureDetector(
+            onTap: () { Navigator.pop(context); context.push('/sos'); },
+            child: Container(
+              width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: BoxDecoration(color: const Color(0xFFEF4444), borderRadius: BorderRadius.circular(14)),
+              child: const Center(child: Text('Send SOS Alert', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16))),
+            ),
+          ),
+          const SizedBox(height: 12),
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: cs.onSurface.withValues(alpha: 0.5), fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+}
+
+class _SlideIn extends StatelessWidget {
+  final Animation<Offset> animation;
+  final Widget child;
+  const _SlideIn({required this.animation, required this.child});
+  @override
+  Widget build(BuildContext context) => SlideTransition(position: animation, child: child);
+}
+
+class _FamilyMember {
+  final String name;
+  final String role;
+  final Color color;
+  final bool isOnline;
+  const _FamilyMember(this.name, this.role, this.color, this.isOnline);
+}
+
+class _AppBarIcon extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+  const _AppBarIcon({required this.icon, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44, height: 44,
+        decoration: BoxDecoration(
+          color: cs.surface.withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.06), width: 0.5),
+        ),
+        child: Icon(icon, size: 22, color: cs.onSurface.withValues(alpha: 0.6)),
+      ),
+    );
+  }
+}
+
+class _MapGridPainter extends CustomPainter {
+  final Color color;
+  _MapGridPainter({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color..strokeWidth = 1;
+    for (double x = 0; x < size.width; x += 28) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (double y = 0; y < size.height; y += 28) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
