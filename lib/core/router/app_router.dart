@@ -10,26 +10,148 @@ import 'package:guardiancircle/features/splash/presentation/screens/splash_scree
 import 'package:guardiancircle/features/profile/presentation/screens/profile_screen.dart';
 import 'package:guardiancircle/features/sos/presentation/screens/sos_screen.dart';
 import 'package:guardiancircle/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:guardiancircle/features/home/presentation/screens/location_details_screen.dart';
+import 'package:guardiancircle/features/family/presentation/screens/member_details_screen.dart';
+import 'package:guardiancircle/features/notifications/presentation/screens/notification_details_screen.dart';
+import 'package:guardiancircle/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:guardiancircle/core/widgets/bottom_nav_shell.dart';
+
+CustomTransitionPage<void> _buildFadePage(Widget child, {LocalKey? key}) {
+  return CustomTransitionPage<void>(
+    key: key,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 350),
+    reverseTransitionDuration: const Duration(milliseconds: 300),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return FadeTransition(
+        opacity: curved,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0.03, 0),
+            end: Offset.zero,
+          ).animate(curved),
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
+CustomTransitionPage<void> _buildSlideUpPage(Widget child, {LocalKey? key}) {
+  return CustomTransitionPage<void>(
+    key: key,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 400),
+    reverseTransitionDuration: const Duration(milliseconds: 300),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.06),
+          end: Offset.zero,
+        ).animate(curved),
+        child: FadeTransition(
+          opacity: curved,
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
+CustomTransitionPage<void> _buildSlideRightPage(
+  Widget child, {
+  LocalKey? key,
+}) {
+  return CustomTransitionPage<void>(
+    key: key,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 400),
+    reverseTransitionDuration: const Duration(milliseconds: 350),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      final reverseCurved = CurvedAnimation(
+        parent: secondaryAnimation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0.3, 0),
+          end: Offset.zero,
+        ).animate(curved),
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: Offset.zero,
+            end: const Offset(-0.15, 0),
+          ).animate(reverseCurved),
+          child: FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+            ),
+            child: child,
+          ),
+        ),
+      );
+    },
+  );
+}
+
+CustomTransitionPage<void> _buildScalePage(Widget child, {LocalKey? key}) {
+  return CustomTransitionPage<void>(
+    key: key,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 400),
+    reverseTransitionDuration: const Duration(milliseconds: 300),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return ScaleTransition(
+        scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+        child: FadeTransition(
+          opacity: curved,
+          child: child,
+        ),
+      );
+    },
+  );
+}
 
 final GoRouter appRouter = GoRouter(
   routes: <RouteBase>[
     GoRoute(
       path: '/',
-      builder: (BuildContext context, GoRouterState state) {
-        return const SplashScreen();
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        return _buildFadePage(const SplashScreen(), key: state.pageKey);
       },
     ),
     GoRoute(
       path: '/login',
-      builder: (BuildContext context, GoRouterState state) {
-        return const LoginScreen();
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        return _buildSlideUpPage(const LoginScreen(), key: state.pageKey);
       },
     ),
     GoRoute(
       path: '/signup',
-      builder: (BuildContext context, GoRouterState state) {
-        return const SignupScreen();
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        return _buildSlideUpPage(const SignupScreen(), key: state.pageKey);
       },
     ),
     StatefulShellRoute.indexedStack(
@@ -95,14 +217,72 @@ final GoRouter appRouter = GoRouter(
     ),
     GoRoute(
       path: '/profile',
-      builder: (BuildContext context, GoRouterState state) {
-        return const ProfileScreen();
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        return _buildSlideRightPage(const ProfileScreen(), key: state.pageKey);
       },
     ),
     GoRoute(
       path: '/sos',
-      builder: (BuildContext context, GoRouterState state) {
-        return const SosScreen();
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        return _buildScalePage(const SosScreen(), key: state.pageKey);
+      },
+    ),
+    GoRoute(
+      path: '/location-details',
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        return _buildSlideRightPage(
+          const LocationDetailsScreen(),
+          key: state.pageKey,
+        );
+      },
+    ),
+    GoRoute(
+      path: '/member-details',
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        final args = state.extra as Map<String, dynamic>? ?? {};
+        return _buildSlideRightPage(
+          MemberDetailsScreen(
+            name: args['name'] as String? ?? 'Unknown',
+            role: args['role'] as String? ?? 'Member',
+            color: args['color'] as Color? ?? Colors.blue,
+            isOnline: args['isOnline'] as bool? ?? false,
+            battery: args['battery'] as int? ?? 0,
+            distance: args['distance'] as String? ?? '—',
+          ),
+          key: state.pageKey,
+        );
+      },
+    ),
+    GoRoute(
+      path: '/notification-details',
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        final args = state.extra as Map<String, dynamic>? ?? {};
+        return _buildSlideRightPage(
+          NotificationDetailsScreen(
+            icon: args['icon'] as IconData? ?? Icons.info_outline,
+            color: args['color'] as Color? ?? Colors.blue,
+            title: args['title'] as String? ?? '',
+            subtitle: args['subtitle'] as String? ?? '',
+            time: args['time'] as String? ?? '',
+            type: args['type'] as String? ?? 'info',
+          ),
+          key: state.pageKey,
+        );
+      },
+    ),
+    GoRoute(
+      path: '/edit-profile',
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        final args = state.extra as Map<String, dynamic>? ?? {};
+        return _buildSlideRightPage(
+          EditProfileScreen(
+            currentName: args['name'] as String? ?? '',
+            currentPhone: args['phone'] as String? ?? '',
+            currentEmail: args['email'] as String? ?? '',
+            currentEmergency: args['emergency'] as String? ?? '',
+          ),
+          key: state.pageKey,
+        );
       },
     ),
   ],

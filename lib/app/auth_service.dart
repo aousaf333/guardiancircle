@@ -1,3 +1,4 @@
+import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthException implements Exception {
@@ -13,8 +14,7 @@ class AuthService {
 
   /// When SUPABASE_URL is not provided, the app runs in placeholder mode
   /// and accepts any non-empty credentials without calling Supabase.
-  static final bool _isPlaceholder =
-    const String.fromEnvironment("SUPABASE_URL").isEmpty;
+  static bool get _isPlaceholder => SupabaseService.isPlaceholder;
 
   AuthService(this._supabaseClient);
 
@@ -37,6 +37,8 @@ class AuthService {
     }
 
     try {
+      print('[SIGNUP] Attempting signUp for: ${email.trim()}');
+
       final response = await _supabaseClient.auth.signUp(
         email: email.trim(),
         password: password,
@@ -46,10 +48,19 @@ class AuthService {
         throw const AuthException('Sign up failed. Please try again.');
       }
 
+      print('[SIGNUP] Success for: ${email.trim()} — userId: ${response.user!.id}');
       return response.user!;
     } on AuthException {
       rethrow;
     } catch (e) {
+      final ex = e as dynamic;
+      print('[SIGNUP] ─── ERROR ───');
+      print('[SIGNUP] email:        ${email.trim()}');
+      print('[SIGNUP] message:      ${ex.message ?? e.toString()}');
+      print('[SIGNUP] statusCode:   ${ex.statusCode ?? "N/A"}');
+      print('[SIGNUP] errorCode:    ${ex.errorCode ?? "N/A"}');
+      print('[SIGNUP] fullException: $e');
+      print('[SIGNUP] ─────────────');
       throw AuthException(_mapAuthError(e.toString()));
     }
   }
