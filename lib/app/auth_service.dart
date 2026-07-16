@@ -1,3 +1,5 @@
+import 'package:guardiancircle/app/profile_state.dart';
+import 'package:guardiancircle/models/profile_model.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -37,8 +39,6 @@ class AuthService {
     }
 
     try {
-      print('[SIGNUP] Attempting signUp for: ${email.trim()}');
-
       final response = await _supabaseClient.auth.signUp(
         email: email.trim(),
         password: password,
@@ -48,19 +48,12 @@ class AuthService {
         throw const AuthException('Sign up failed. Please try again.');
       }
 
-      print('[SIGNUP] Success for: ${email.trim()} — userId: ${response.user!.id}');
+      await ensureProfile(response.user!);
+      await _loadProfileForUser(response.user!.id);
       return response.user!;
     } on AuthException {
       rethrow;
     } catch (e) {
-      final ex = e as dynamic;
-      print('[SIGNUP] ─── ERROR ───');
-      print('[SIGNUP] email:        ${email.trim()}');
-      print('[SIGNUP] message:      ${ex.message ?? e.toString()}');
-      print('[SIGNUP] statusCode:   ${ex.statusCode ?? "N/A"}');
-      print('[SIGNUP] errorCode:    ${ex.errorCode ?? "N/A"}');
-      print('[SIGNUP] fullException: $e');
-      print('[SIGNUP] ─────────────');
       throw AuthException(_mapAuthError(e.toString()));
     }
   }
@@ -86,6 +79,8 @@ class AuthService {
         throw const AuthException('Login failed. Please try again.');
       }
 
+      await ensureProfile(response.user!);
+      await _loadProfileForUser(response.user!.id);
       return response.user!;
     } on AuthException {
       rethrow;
@@ -97,6 +92,7 @@ class AuthService {
   Future<void> signOut() async {
     try {
       await _supabaseClient.auth.signOut();
+      updateProfile(null);
     } catch (e) {
       throw AuthException(_mapAuthError(e.toString()));
     }
@@ -111,6 +107,49 @@ class AuthService {
       await _supabaseClient.auth.resetPasswordForEmail(email.trim());
     } catch (e) {
       throw AuthException(_mapAuthError(e.toString()));
+    }
+  }
+
+  Future<void> ensureProfile(User user) async {
+    try {
+      final existing = await _supabaseClient
+          .from('profiles')
+          .select('id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (existing != null) return;
+
+      final emailPrefix = user.email?.split('@').first ?? 'User';
+
+      await _supabaseClient.from('profiles').insert({
+        'id': user.id,
+        'email': user.email,
+        'name': emailPrefix,
+        'phone': null,
+        'photo_url': null,
+      });
+    } catch (e) {
+      // Profile may already exist or insert may fail silently
+    }
+  }
+
+  Future<void> _loadProfileForUser(String userId) async {
+    try {
+      final rows = await _supabaseClient
+          .from('profiles')
+          .select('id, name, email, phone, photo_url, created_at')
+          .eq('id', userId);
+      final list = rows as List;
+      if (list.isNotEmpty) {
+        updateProfile(
+          ProfileModel.fromJson(list.first as Map<String, dynamic>),
+        );
+      } else {
+        updateProfile(null);
+      }
+    } catch (_) {
+      updateProfile(null);
     }
   }
 

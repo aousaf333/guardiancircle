@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:guardiancircle/app/auth_service.dart';
+import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
 import 'package:guardiancircle/shared/widgets/glass_card.dart';
 import 'package:guardiancircle/shared/widgets/section_header.dart';
@@ -60,26 +61,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   String get _userName {
+    final p = profileNotifier.value;
+    if (p != null && p.name != null && p.name!.isNotEmpty) {
+      return p.name!.split(' ').first;
+    }
     final user = _authService.currentUser;
     if (user == null) return 'there';
     final meta = user.userMetadata;
-    if (meta != null && meta['full_name'] != null) {
-      return (meta['full_name'] as String).split(' ').first;
+    if (meta != null && meta['name'] != null) {
+      return (meta['name'] as String).split(' ').first;
     }
     if (user.email != null) return user.email!.split('@').first;
     return 'there';
   }
 
   String get _userInitial {
+    final p = profileNotifier.value;
+    if (p != null && p.name != null && p.name!.isNotEmpty) {
+      return p.name!.characters.first.toUpperCase();
+    }
     final user = _authService.currentUser;
     if (user == null) return '?';
     final meta = user.userMetadata;
-    if (meta != null && meta['full_name'] != null) {
-      return (meta['full_name'] as String).characters.first.toUpperCase();
+    if (meta != null && meta['name'] != null) {
+      return (meta['name'] as String).characters.first.toUpperCase();
     }
     if (user.email != null) return user.email!.characters.first.toUpperCase();
     return '?';
   }
+
+  String? get _userPhotoUrl => profileNotifier.value?.photoUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -177,67 +188,90 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildAppBar(ThemeData theme, ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-      child: Row(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _greeting,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurface.withValues(alpha: 0.4),
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _userName,
-                style: theme.textTheme.headlineLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.5,
-                ),
-              ),
-            ],
-          ),
-          const Spacer(),
-          AppBarIconButton(
-            icon: Icons.notifications_active_outlined,
-            onTap: () => context.push('/notifications'),
-          ),
-          const SizedBox(width: 10),
-          GestureDetector(
-            onTap: () => context.push('/settings'),
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [cs.primary, cs.secondary, cs.tertiary],
-                ),
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: cs.primary.withValues(alpha: 0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Center(
-                child: Text(
-                  _userInitial,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
+    return ValueListenableBuilder(
+      valueListenable: profileNotifier,
+      builder: (_, _, _) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+        child: Row(
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _greeting,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: cs.onSurface.withValues(alpha: 0.4),
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
+                const SizedBox(height: 2),
+                Text(
+                  _userName,
+                  style: theme.textTheme.headlineLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            AppBarIconButton(
+              icon: Icons.notifications_active_outlined,
+              onTap: () => context.push('/notifications'),
+            ),
+            const SizedBox(width: 10),
+            GestureDetector(
+              onTap: () => context.push('/settings'),
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [cs.primary, cs.secondary, cs.tertiary],
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: cs.primary.withValues(alpha: 0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: _userPhotoUrl != null && _userPhotoUrl!.isNotEmpty
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: Image.network(
+                          _userPhotoUrl!,
+                          width: 44,
+                          height: 44,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Center(
+                            child: Text(
+                              _userInitial,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : Center(
+                        child: Text(
+                          _userInitial,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -8,6 +8,7 @@ import 'package:guardiancircle/services/family_service.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
 import 'package:guardiancircle/shared/widgets/app_bar_icon_button.dart';
 import 'package:guardiancircle/shared/widgets/empty_state.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class FamilyScreen extends StatefulWidget {
   const FamilyScreen({super.key});
@@ -29,41 +30,10 @@ class _FamilyScreenState extends State<FamilyScreen>
   String? _familiesError;
 
   List<FamilyModel> _families = [];
-
-  final _members = [
-    _FamilyMember(
-      name: 'Sarah Miller',
-      role: 'Mom',
-      color: const Color(0xFFEC4899),
-      isOnline: true,
-      battery: 87,
-      distance: '0.3 mi',
-    ),
-    _FamilyMember(
-      name: 'James Miller',
-      role: 'Dad',
-      color: const Color(0xFF3B82F6),
-      isOnline: true,
-      battery: 62,
-      distance: '1.2 mi',
-    ),
-    _FamilyMember(
-      name: 'Emma Miller',
-      role: 'Sister',
-      color: const Color(0xFF8B5CF6),
-      isOnline: false,
-      battery: 15,
-      distance: '4.7 mi',
-    ),
-    _FamilyMember(
-      name: 'You',
-      role: 'Me',
-      color: AppTheme.primary,
-      isOnline: true,
-      battery: 94,
-      distance: '—',
-    ),
-  ];
+  String? _selectedFamilyId;
+  List<_FamilyMember> _members = [];
+  bool _isLoadingMembers = false;
+  String? _membersError;
 
   @override
   void initState() {
@@ -80,7 +50,7 @@ class _FamilyScreenState extends State<FamilyScreen>
       parent: _fadeController,
       curve: Curves.easeOutCubic,
     );
-    _slideIns = StaggeredSlideIns(controller: _slideController, count: 6);
+    _slideIns = StaggeredSlideIns(controller: _slideController, count: 7);
     _fadeController.forward();
     _slideController.forward();
     _fetchFamilies();
@@ -116,7 +86,13 @@ class _FamilyScreenState extends State<FamilyScreen>
         setState(() {
           _families = families;
           _isLoadingFamilies = false;
+          if (_selectedFamilyId == null && families.isNotEmpty) {
+            _selectedFamilyId = families.first.id;
+          }
         });
+        if (_selectedFamilyId != null) {
+          await _fetchMembers();
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -125,6 +101,117 @@ class _FamilyScreenState extends State<FamilyScreen>
           _isLoadingFamilies = false;
         });
       }
+    }
+  }
+
+  Future<void> _fetchMembers() async {
+    final familyId = _selectedFamilyId;
+    if (familyId == null) return;
+    setState(() {
+      _isLoadingMembers = true;
+      _membersError = null;
+    });
+    try {
+      final rows = await _familyService.fetchFamilyMembers(familyId);
+
+      print('[FamilyScreen] Current auth uid: '
+          '${Supabase.instance.client.auth.currentUser?.id}');
+      print('[FamilyScreen] Current family id: $familyId');
+      print('[FamilyScreen] Family member rows loaded: ${rows.length}');
+
+      final family = _families.cast<FamilyModel?>().firstWhere(
+            (f) => f?.id == familyId,
+            orElse: () => null,
+          );
+      final createdBy = family?.createdBy;
+
+      final members = rows.map((row) {
+        final profile = _familyService.parseProfile(row);
+        final name = profile?.displayName ?? 'Unknown';
+        final email = profile?.email ?? '';
+        final isOwner =
+            row['role'] == 'owner' || row['user_id'] == createdBy;
+        final avatarColors = [
+          const Color(0xFFEC4899),
+          const Color(0xFF3B82F6),
+          const Color(0xFF8B5CF6),
+          const Color(0xFFF59E0B),
+          const Color(0xFF10B981),
+          const Color(0xFFEF4444),
+          const Color(0xFF06B6D4),
+          const Color(0xFF8B5CF6),
+        ];
+        final colorIndex = name.hashCode.abs() % avatarColors.length;
+        return _FamilyMember(
+          name: name,
+          email: email,
+          role: isOwner ? 'Owner' : (row['role'] as String? ?? 'Member'),
+          color: avatarColors[colorIndex],
+          photoUrl: profile?.photoUrl,
+          isOwner: isOwner,
+          userId: row['user_id'] as String,
+        );
+      }).toList();
+
+      print('[FamilyScreen] User IDs loaded: '
+          '${members.map((m) => m.userId).toList()}');
+      print('[FamilyScreen] Profiles loaded: ${members.length}');
+      print('[FamilyScreen] Members displayed: ${members.length}');
+
+      if (mounted) {
+        setState(() {
+          _members = members;
+          _isLoadingMembers = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _membersError = e.toString();
+          _isLoadingMembers = false;
+        });
+      }
+    }
+  }
+
+  void _selectFamily(String familyId) {
+    if (_selectedFamilyId == familyId) return;
+    setState(() => _selectedFamilyId = familyId);
+    _fetchMembers();
+  }
+
+  Future<void> _shareInviteCode(FamilyModel family) async {
+    String? code = family.inviteCode;
+
+    if (code == null || code.isEmpty) {
+      try {
+        code = await _familyService.generateAndSaveInviteCode(family.id);
+        if (mounted) {
+          setState(() {
+            final index = _families.indexWhere((f) => f.id == family.id);
+            if (index != -1) {
+              _families[index] = _families[index].copyWith(inviteCode: code);
+            }
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to generate invite code: $e'),
+              backgroundColor: AppTheme.danger,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    await Clipboard.setData(ClipboardData(text: code));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invite code copied.')),
+      );
     }
   }
 
@@ -143,7 +230,7 @@ class _FamilyScreenState extends State<FamilyScreen>
     final cs = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final ext = theme.extension<AppThemeExtension>();
-    final onlineCount = _members.where((m) => m.isOnline).length;
+    final memberCount = _members.length;
 
     return Scaffold(
       floatingActionButton: ScaleOnTap(
@@ -191,7 +278,7 @@ class _FamilyScreenState extends State<FamilyScreen>
               ),
               slivers: [
                 SliverToBoxAdapter(
-                  child: _buildAppBar(theme, cs, onlineCount),
+                  child:                 _buildAppBar(theme, cs, memberCount),
                 ),
                 SliverToBoxAdapter(
                   child: SlideInAnimation(
@@ -202,7 +289,7 @@ class _FamilyScreenState extends State<FamilyScreen>
                 SliverToBoxAdapter(
                   child: SlideInAnimation(
                     animation: _slideIns.get(1),
-                    child: _buildStatsRow(cs, isDark, onlineCount),
+                    child: _buildStatsRow(cs, isDark, memberCount),
                   ),
                 ),
                 SliverToBoxAdapter(
@@ -214,6 +301,12 @@ class _FamilyScreenState extends State<FamilyScreen>
                 SliverToBoxAdapter(
                   child: SlideInAnimation(
                     animation: _slideIns.get(3),
+                    child: _buildInviteCodeSection(theme, cs, isDark),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: SlideInAnimation(
+                    animation: _slideIns.get(4),
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
                       child: Row(
@@ -226,7 +319,9 @@ class _FamilyScreenState extends State<FamilyScreen>
                             ),
                           ),
                           Text(
-                            '${_filteredMembers.length} total',
+                            _selectedFamilyId == null
+                                ? '0 total'
+                                : '${_filteredMembers.length} total',
                             style: theme.textTheme.labelMedium?.copyWith(
                               color: cs.onSurface.withValues(alpha: 0.4),
                             ),
@@ -236,21 +331,108 @@ class _FamilyScreenState extends State<FamilyScreen>
                     ),
                   ),
                 ),
-                SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final member = _filteredMembers[index];
-                      return SlideInAnimation(
-                        animation: _slideIns.get(
-                          index.clamp(0, _slideIns.animations.length - 1),
+                if (_isLoadingMembers)
+                  SliverToBoxAdapter(
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: cs.primary,
+                          ),
                         ),
-                        child: _buildMemberCard(member, theme, cs, isDark),
-                      );
-                    },
-                    childCount: _filteredMembers.length,
+                      ),
+                    ),
+                  )
+                else if (_membersError != null)
+                  SliverToBoxAdapter(
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 20),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppTheme.danger.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: AppTheme.danger.withValues(alpha: 0.2),
+                          width: 0.5,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.error_outline_rounded,
+                            size: 18,
+                            color: AppTheme.danger,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Failed to load members',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                    color: cs.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _membersError!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: cs.onSurface.withValues(alpha: 0.5),
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _fetchMembers,
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else if (_selectedFamilyId == null || _members.isEmpty)
+                  SliverToBoxAdapter(
+                    child: EmptyState(
+                      icon: Icons.group_off_rounded,
+                      title: _selectedFamilyId == null
+                          ? 'Select a family'
+                          : 'No members yet',
+                      subtitle: _selectedFamilyId == null
+                          ? 'Tap a family above to view members'
+                          : 'Invite members to get started',
+                    ),
+                  )
+                else
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final member = _filteredMembers[index];
+                        return SlideInAnimation(
+                          animation: _slideIns.get(
+                            index.clamp(0, _slideIns.animations.length - 1),
+                          ),
+                          child: _buildMemberCard(member, theme, cs, isDark),
+                        );
+                      },
+                      childCount: _filteredMembers.length,
+                    ),
                   ),
-                ),
-                if (_filteredMembers.isEmpty)
+                if (_selectedFamilyId != null &&
+                    !_isLoadingMembers &&
+                    _membersError == null &&
+                    _filteredMembers.isEmpty &&
+                    _searchQuery.isNotEmpty)
                   SliverToBoxAdapter(
                     child: EmptyState(
                       icon: Icons.search_off_rounded,
@@ -260,7 +442,7 @@ class _FamilyScreenState extends State<FamilyScreen>
                   ),
                 SliverToBoxAdapter(
                   child: SlideInAnimation(
-                    animation: _slideIns.get(4),
+                    animation: _slideIns.get(5),
                     child: _buildActionButtons(cs, isDark),
                   ),
                 ),
@@ -273,7 +455,7 @@ class _FamilyScreenState extends State<FamilyScreen>
     );
   }
 
-  Widget _buildAppBar(ThemeData theme, ColorScheme cs, int onlineCount) {
+  Widget _buildAppBar(ThemeData theme, ColorScheme cs, int memberCount) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
       child: Row(
@@ -290,7 +472,7 @@ class _FamilyScreenState extends State<FamilyScreen>
               ),
               const SizedBox(height: 2),
               Text(
-                '$onlineCount of ${_members.length} members online',
+                '$memberCount ${memberCount == 1 ? 'member' : 'members'}',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: cs.onSurface.withValues(alpha: 0.4),
                 ),
@@ -394,29 +576,22 @@ class _FamilyScreenState extends State<FamilyScreen>
     );
   }
 
-  Widget _buildStatsRow(ColorScheme cs, bool isDark, int onlineCount) {
+  Widget _buildStatsRow(ColorScheme cs, bool isDark, int memberCount) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
       child: Row(
         children: [
           _StatChip(
-            icon: Icons.circle,
-            iconColor: AppTheme.success,
-            label: '$onlineCount Online',
-            isDark: isDark,
-          ),
-          const SizedBox(width: 8),
-          _StatChip(
-            icon: Icons.battery_std_rounded,
-            iconColor: AppTheme.warning,
-            label: 'Avg 65%',
-            isDark: isDark,
-          ),
-          const SizedBox(width: 8),
-          _StatChip(
-            icon: Icons.location_on_rounded,
+            icon: Icons.group_rounded,
             iconColor: cs.primary,
-            label: '2.1 mi avg',
+            label: '$memberCount ${memberCount == 1 ? 'Member' : 'Members'}',
+            isDark: isDark,
+          ),
+          const SizedBox(width: 8),
+          _StatChip(
+            icon: Icons.family_restroom_rounded,
+            iconColor: AppTheme.success,
+            label: '${_families.length} ${_families.length == 1 ? 'Family' : 'Families'}',
             isDark: isDark,
           ),
         ],
@@ -556,7 +731,14 @@ class _FamilyScreenState extends State<FamilyScreen>
           else
             ...List.generate(_families.length, (i) {
               final family = _families[i];
-              return Padding(
+              final isOwner = family.createdBy == Supabase.instance.client.auth.currentUser?.id;
+              final isSelected = family.id == _selectedFamilyId;
+              return GestureDetector(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  _selectFamily(family.id);
+                },
+                child: Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(18),
@@ -570,8 +752,10 @@ class _FamilyScreenState extends State<FamilyScreen>
                         ),
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
-                          color: cs.outline.withValues(alpha: 0.3),
-                          width: 0.5,
+                          color: isSelected
+                              ? cs.primary.withValues(alpha: 0.6)
+                              : cs.outline.withValues(alpha: 0.3),
+                          width: isSelected ? 1.5 : 0.5,
                         ),
                       ),
                       child: Row(
@@ -612,15 +796,16 @@ class _FamilyScreenState extends State<FamilyScreen>
                                   ),
                                 ),
                                 const SizedBox(height: 2),
-                                Text(
-                                  'Code: ${family.inviteCode}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    fontFamily: 'monospace',
-                                    color: cs.primary.withValues(alpha: 0.7),
+                                if (isOwner && family.inviteCode != null && family.inviteCode!.isNotEmpty)
+                                  Text(
+                                    'Code: ${family.inviteCode}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      fontFamily: 'monospace',
+                                      color: cs.primary.withValues(alpha: 0.7),
+                                    ),
                                   ),
-                                ),
                                 const SizedBox(height: 1),
                                 Text(
                                   'Created ${_formatDate(family.createdAt)}',
@@ -643,8 +828,131 @@ class _FamilyScreenState extends State<FamilyScreen>
                     ),
                   ),
                 ),
+              ),
               );
             }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInviteCodeSection(ThemeData theme, ColorScheme cs, bool isDark) {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return const SizedBox.shrink();
+
+    final ownedFamilies =
+        _families.where((f) => f.createdBy == userId).toList();
+    if (ownedFamilies.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Invite Code',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...ownedFamilies.map((family) {
+            final code = family.inviteCode;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: cs.surface.withValues(
+                        alpha: isDark ? 0.55 : 0.75,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: cs.outline.withValues(alpha: 0.3),
+                        width: 0.5,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.vpn_key_rounded,
+                              size: 16,
+                              color: cs.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              family.name,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(
+                              alpha: isDark ? 0.1 : 0.05,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: cs.primary.withValues(alpha: 0.2),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: Text(
+                            (code != null && code.isNotEmpty)
+                                ? code
+                                : 'TAP TO GENERATE',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 4,
+                              color: cs.primary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: () => _shareInviteCode(family),
+                            icon: const Icon(Icons.share_rounded, size: 18),
+                            label: const Text('Share Invite Code'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: cs.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
         ],
       ),
     );
@@ -656,12 +964,6 @@ class _FamilyScreenState extends State<FamilyScreen>
     ColorScheme cs,
     bool isDark,
   ) {
-    final batteryColor = member.battery > 50
-        ? AppTheme.success
-        : member.battery > 20
-            ? AppTheme.warning
-            : AppTheme.danger;
-
     return GestureDetector(
       onTap: () {
         HapticFeedback.lightImpact();
@@ -669,9 +971,9 @@ class _FamilyScreenState extends State<FamilyScreen>
           'name': member.name,
           'role': member.role,
           'color': member.color,
-          'isOnline': member.isOnline,
-          'battery': member.battery,
-          'distance': member.distance,
+          'isOnline': false,
+          'battery': 0,
+          'distance': '—',
         });
       },
       child: Container(
@@ -685,8 +987,10 @@ class _FamilyScreenState extends State<FamilyScreen>
                 color: cs.surface.withValues(alpha: isDark ? 0.55 : 0.75),
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(
-                  color: cs.outline.withValues(alpha: 0.3),
-                  width: 0.5,
+                  color: member.isOwner
+                      ? cs.primary.withValues(alpha: 0.4)
+                      : cs.outline.withValues(alpha: 0.3),
+                  width: member.isOwner ? 1.0 : 0.5,
                 ),
                 boxShadow: [
                   BoxShadow(
@@ -701,65 +1005,42 @@ class _FamilyScreenState extends State<FamilyScreen>
                 children: [
                   Stack(
                     children: [
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              member.color,
-                              member.color.withValues(alpha: 0.6),
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: member.color.withValues(alpha: 0.35),
-                              blurRadius: 14,
-                              offset: const Offset(0, 5),
+                      member.photoUrl != null && member.photoUrl!.isNotEmpty
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              child: Image.network(
+                                member.photoUrl!,
+                                width: 56,
+                                height: 56,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => _buildPlaceholderAvatar(member, cs),
+                              ),
+                            )
+                          : _buildPlaceholderAvatar(member, cs),
+                      if (member.isOwner)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: AppTheme.warning,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isDark
+                                    ? const Color(0xFF111827)
+                                    : Colors.white,
+                                width: 2.5,
+                              ),
                             ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Text(
-                            member.name.characters.first,
-                            style: const TextStyle(
+                            child: const Icon(
+                              Icons.star_rounded,
+                              size: 10,
                               color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 22,
-                              letterSpacing: -0.5,
                             ),
                           ),
                         ),
-                      ),
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          width: 16,
-                          height: 16,
-                          decoration: BoxDecoration(
-                            color: member.isOnline
-                                ? AppTheme.success
-                                : cs.onSurface.withValues(alpha: 0.2),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: isDark
-                                  ? const Color(0xFF111827)
-                                  : Colors.white,
-                              width: 2.5,
-                            ),
-                            boxShadow: member.isOnline
-                                ? const [
-                                    BoxShadow(
-                                      color: Color(0x8010B981),
-                                      blurRadius: 6,
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                   const SizedBox(width: 16),
@@ -779,7 +1060,7 @@ class _FamilyScreenState extends State<FamilyScreen>
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            if (member.name == 'You') ...[
+                            if (member.isOwner) ...[
                               const SizedBox(width: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(
@@ -787,15 +1068,15 @@ class _FamilyScreenState extends State<FamilyScreen>
                                   vertical: 2,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: cs.primary.withValues(
+                                  color: AppTheme.warning.withValues(
                                     alpha: isDark ? 0.2 : 0.1,
                                   ),
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
-                                  'You',
+                                  'Owner',
                                   style: TextStyle(
-                                    color: cs.primary,
+                                    color: AppTheme.warning,
                                     fontWeight: FontWeight.w700,
                                     fontSize: 9,
                                   ),
@@ -804,68 +1085,23 @@ class _FamilyScreenState extends State<FamilyScreen>
                             ],
                           ],
                         ),
-                        const SizedBox(height: 3),
+                        if (member.email.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            member.email,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: cs.onSurface.withValues(alpha: 0.4),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const SizedBox(height: 4),
                         Text(
                           member.role,
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: cs.onSurface.withValues(alpha: 0.4),
+                            color: cs.onSurface.withValues(alpha: 0.35),
+                            fontWeight: FontWeight.w500,
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: member.isOnline
-                                    ? AppTheme.success
-                                    : cs.onSurface.withValues(alpha: 0.2),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              member.isOnline ? 'Online' : 'Offline',
-                              style: TextStyle(
-                                color: member.isOnline
-                                    ? AppTheme.success
-                                    : cs.onSurface.withValues(alpha: 0.35),
-                                fontWeight: FontWeight.w500,
-                                fontSize: 11,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Icon(
-                              Icons.battery_std_rounded,
-                              size: 14,
-                              color: batteryColor,
-                            ),
-                            const SizedBox(width: 3),
-                            Text(
-                              '${member.battery}%',
-                              style: TextStyle(
-                                color: batteryColor,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 11,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Icon(
-                              Icons.location_on_rounded,
-                              size: 13,
-                              color: cs.primary.withValues(alpha: 0.55),
-                            ),
-                            const SizedBox(width: 3),
-                            Text(
-                              member.distance,
-                              style: TextStyle(
-                                color: cs.onSurface.withValues(alpha: 0.4),
-                                fontWeight: FontWeight.w500,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
                         ),
                       ],
                     ),
@@ -886,6 +1122,40 @@ class _FamilyScreenState extends State<FamilyScreen>
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholderAvatar(_FamilyMember member, ColorScheme cs) {
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            member.color,
+            member.color.withValues(alpha: 0.6),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: member.color.withValues(alpha: 0.35),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          member.name.characters.first.toUpperCase(),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+            fontSize: 22,
+            letterSpacing: -0.5,
           ),
         ),
       ),
@@ -1109,9 +1379,11 @@ class _FamilyScreenState extends State<FamilyScreen>
                       setDialogState(() => isCreating = true);
 
                       try {
-                        await _familyService.createFamily(name);
+                        final family = await _familyService.createFamily(name);
                         if (ctx.mounted) Navigator.pop(ctx);
                         await _fetchFamilies();
+                        setState(() => _selectedFamilyId = family.id);
+                        await _fetchMembers();
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -1227,6 +1499,8 @@ class _FamilyScreenState extends State<FamilyScreen>
                         final family = await _familyService.joinFamily(code);
                         if (ctx.mounted) Navigator.pop(ctx);
                         await _fetchFamilies();
+                        setState(() => _selectedFamilyId = family.id);
+                        await _fetchMembers();
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -1266,19 +1540,21 @@ class _FamilyScreenState extends State<FamilyScreen>
 
 class _FamilyMember {
   final String name;
+  final String email;
   final String role;
   final Color color;
-  final bool isOnline;
-  final int battery;
-  final String distance;
+  final String? photoUrl;
+  final bool isOwner;
+  final String userId;
 
   const _FamilyMember({
     required this.name,
+    required this.email,
     required this.role,
     required this.color,
-    required this.isOnline,
-    required this.battery,
-    required this.distance,
+    this.photoUrl,
+    required this.isOwner,
+    required this.userId,
   });
 }
 

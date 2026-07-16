@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:guardiancircle/app/auth_service.dart';
+import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/app/theme_state.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
@@ -58,11 +59,15 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   String get _userName {
+    final p = profileNotifier.value;
+    if (p != null && p.name != null && p.name!.isNotEmpty) {
+      return p.name!;
+    }
     final user = _authService.currentUser;
     if (user == null) return 'Guest User';
     final meta = user.userMetadata;
-    if (meta != null && meta['full_name'] != null) {
-      return meta['full_name'] as String;
+    if (meta != null && meta['name'] != null) {
+      return meta['name'] as String;
     }
     if (user.email != null) return user.email!.split('@').first;
     return 'Guest User';
@@ -72,6 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       _authService.currentUser?.email ?? 'guest@example.com';
   String get _userInitial =>
       _userName == 'Guest User' ? 'G' : _userName.characters.first.toUpperCase();
+  String? get _userPhotoUrl => profileNotifier.value?.photoUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -207,87 +213,119 @@ class _SettingsScreenState extends State<SettingsScreen>
   Widget _buildProfileCard(ThemeData theme, ColorScheme cs, bool isDark) {
     return GestureDetector(
       onTap: () => context.push('/profile'),
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(20, 12, 20, 6),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    cs.primary.withValues(alpha: isDark ? 0.18 : 0.08),
-                    cs.tertiary.withValues(alpha: isDark ? 0.12 : 0.06),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: cs.primary.withValues(alpha: isDark ? 0.12 : 0.08),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: cs.primary.withValues(alpha: isDark ? 0.18 : 0.05),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
+      child: ValueListenableBuilder(
+        valueListenable: profileNotifier,
+        builder: (_, _, _) => Container(
+          margin: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      cs.primary.withValues(alpha: isDark ? 0.18 : 0.08),
+                      cs.tertiary.withValues(alpha: isDark ? 0.12 : 0.06),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Hero(
-                    tag: 'profile-avatar',
-                    child: Container(
-                      width: 62,
-                      height: 62,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [cs.primary, cs.tertiary],
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: cs.primary.withValues(alpha: 0.35),
-                            blurRadius: 14,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          _userInitial,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 24,
-                          ),
-                        ),
-                      ),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: cs.primary.withValues(alpha: isDark ? 0.12 : 0.08),
+                    width: 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: cs.primary.withValues(alpha: isDark ? 0.18 : 0.05),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _userName,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Hero(
+                      tag: 'profile-avatar',
+                      child: _userPhotoUrl != null && _userPhotoUrl!.isNotEmpty
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              child: Image.network(
+                                _userPhotoUrl!,
+                                width: 62,
+                                height: 62,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => Container(
+                                  width: 62,
+                                  height: 62,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [cs.primary, cs.tertiary],
+                                    ),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      _userInitial,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 24,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            )
+                          : Container(
+                              width: 62,
+                              height: 62,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [cs.primary, cs.tertiary],
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: cs.primary.withValues(alpha: 0.35),
+                                    blurRadius: 14,
+                                    offset: const Offset(0, 5),
+                                  ),
+                                ],
+                              ),
+                              child: Center(
+                                child: Text(
+                                  _userInitial,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 24,
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _userName,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _userEmail,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: cs.onSurface.withValues(alpha: 0.45),
+                          const SizedBox(height: 2),
+                          Text(
+                            _userEmail,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: cs.onSurface.withValues(alpha: 0.45),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 6),
+                          const SizedBox(height: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -322,6 +360,7 @@ class _SettingsScreenState extends State<SettingsScreen>
           ),
         ),
       ),
+    ),
     );
   }
 

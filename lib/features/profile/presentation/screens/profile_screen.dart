@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:guardiancircle/app/auth_service.dart';
+import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/models/profile_model.dart';
+import 'package:guardiancircle/services/family_service.dart';
 import 'package:guardiancircle/shared/widgets/glass_card.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -13,14 +17,19 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen>
     with TickerProviderStateMixin {
   late final AuthService _authService;
+  late final FamilyService _familyService;
   late final AnimationController _fadeController;
   late final AnimationController _pulseController;
   late final Animation<double> _fadeAnim;
+
+  ProfileModel? _profile;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _authService = AuthService.defaultClient();
+    _familyService = FamilyService.defaultClient();
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -34,6 +43,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       curve: Curves.easeOutCubic,
     );
     _fadeController.forward();
+    _loadProfile();
   }
 
   @override
@@ -43,21 +53,48 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.dispose();
   }
 
-  String get _userName {
+  String get _userId =>
+      Supabase.instance.client.auth.currentUser?.id ?? '';
+
+  String get _fallbackName {
     final user = _authService.currentUser;
     if (user == null) return 'Guest User';
     final meta = user.userMetadata;
-    if (meta != null && meta['full_name'] != null) {
-      return meta['full_name'] as String;
+    if (meta != null && meta['name'] != null) {
+      return meta['name'] as String;
     }
     if (user.email != null) return user.email!.split('@').first;
     return 'Guest User';
   }
 
+  String get _userName => _profile?.name ?? _fallbackName;
   String get _userEmail =>
-      _authService.currentUser?.email ?? 'guest@example.com';
+      _profile?.email ?? _authService.currentUser?.email ?? 'guest@example.com';
+  String get _userPhone => _profile?.phone ?? '';
+  String? get _userPhotoUrl => _profile?.photoUrl;
   String get _userInitial =>
       _userName == 'Guest User' ? 'G' : _userName.characters.first.toUpperCase();
+
+  Future<void> _loadProfile() async {
+    final userId = _userId;
+    if (userId.isEmpty) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      final profile = await _familyService.fetchProfile(userId);
+      if (profile != null) updateProfile(profile);
+      if (mounted) {
+        setState(() {
+          _profile = profile;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,199 +120,236 @@ class _ProfileScreenState extends State<ProfileScreen>
         child: SafeArea(
           child: FadeTransition(
             opacity: _fadeAnim,
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics(),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Column(
-                children: [
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      GestureDetector(
-                        onTap: () => Navigator.pop(context),
-                        child: Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.06)
-                                : Colors.black.withValues(alpha: 0.04),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: cs.outline.withValues(alpha: 0.3),
-                              width: 0.5,
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.chevron_left_rounded,
-                            color: cs.onSurface,
-                            size: 24,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        'Profile',
-                        style: theme.textTheme.headlineLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 36),
-                  // Avatar
-                  Hero(
-                    tag: 'profile-avatar',
-                    child: AnimatedBuilder(
-                      animation: _pulseController,
-                      builder: (context, child) => Container(
-                        width: 124,
-                        height: 124,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: LinearGradient(
-                            colors: [cs.primary, cs.secondary, cs.tertiary],
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: cs.primary.withValues(
-                                alpha: 0.2 + _pulseController.value * 0.1,
+            child: _isLoading
+                ? Center(
+                    child: CircularProgressIndicator(color: cs.primary),
+                  )
+                : SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () => Navigator.pop(context),
+                              child: Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? Colors.white.withValues(alpha: 0.06)
+                                      : Colors.black.withValues(alpha: 0.04),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: cs.outline.withValues(alpha: 0.3),
+                                    width: 0.5,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.chevron_left_rounded,
+                                  color: cs.onSurface,
+                                  size: 24,
+                                ),
                               ),
-                              blurRadius: 44,
-                              spreadRadius: 8,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Profile',
+                              style: theme.textTheme.headlineLarge?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.5,
+                              ),
                             ),
                           ],
                         ),
-                        child: Center(
-                          child: Text(
-                            _userInitial,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 50,
-                            ),
+                        const SizedBox(height: 36),
+                        // Avatar
+                        Hero(
+                          tag: 'profile-avatar',
+                          child: AnimatedBuilder(
+                            animation: _pulseController,
+                            builder: (context, child) {
+                              final hasPhoto = _userPhotoUrl != null &&
+                                  _userPhotoUrl!.isNotEmpty;
+                              final child_ = hasPhoto
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(62),
+                                      child: Image.network(
+                                        _userPhotoUrl!,
+                                        width: 124,
+                                        height: 124,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) =>
+                                            _buildGradientAvatar(cs),
+                                      ),
+                                    )
+                                  : _buildGradientAvatar(cs);
+                              return Container(
+                                width: 124,
+                                height: 124,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: hasPhoto
+                                      ? null
+                                      : LinearGradient(
+                                          colors: [
+                                            cs.primary,
+                                            cs.secondary,
+                                            cs.tertiary,
+                                          ],
+                                        ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: cs.primary.withValues(
+                                        alpha: 0.2 +
+                                            _pulseController.value * 0.1,
+                                      ),
+                                      blurRadius: 44,
+                                      spreadRadius: 8,
+                                    ),
+                                  ],
+                                ),
+                                child: child_,
+                              );
+                            },
                           ),
                         ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  Text(
-                    _userName,
-                    style: theme.textTheme.headlineLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _userEmail,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: cs.onSurface.withValues(alpha: 0.45),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color: cs.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.verified_rounded,
-                          color: cs.primary,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 6),
+                        const SizedBox(height: 22),
                         Text(
-                          'Family Admin',
-                          style: TextStyle(
-                            color: cs.primary,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
+                          _userName,
+                          style: theme.textTheme.headlineLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5,
                           ),
                         ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _userEmail,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: cs.onSurface.withValues(alpha: 0.45),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.verified_rounded,
+                                color: cs.primary,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Family Admin',
+                                style: TextStyle(
+                                  color: cs.primary,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                        // Info cards
+                        GlassCard(
+                          child: Column(
+                            children: [
+                              _InfoRow(
+                                icon: Icons.phone_outlined,
+                                label: 'Phone',
+                                value: _userPhone.isNotEmpty
+                                    ? _userPhone
+                                    : 'Not set',
+                              ),
+                              Divider(
+                                color: cs.outline.withValues(alpha: 0.2),
+                              ),
+                              _InfoRow(
+                                icon: Icons.email_outlined,
+                                label: 'Email',
+                                value: _userEmail,
+                              ),
+                              Divider(
+                                color: cs.outline.withValues(alpha: 0.2),
+                              ),
+                              _InfoRow(
+                                icon: Icons.badge_outlined,
+                                label: 'Role',
+                                value: 'Family Admin',
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        // Buttons
+                        _buildButton(
+                          'Edit Profile',
+                          Icons.edit_outlined,
+                          cs.primary,
+                          () async {
+                            final result = await context.push('/edit-profile');
+                            if (result == true && mounted) {
+                              _loadProfile();
+                            }
+                          },
+                          isDark,
+                        ),
+                        const SizedBox(height: 12),
+                        _buildButton(
+                          'Share Profile',
+                          Icons.share_outlined,
+                          cs.secondary,
+                          () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content:
+                                    Text('Profile link copied to clipboard'),
+                              ),
+                            );
+                          },
+                          isDark,
+                        ),
+                        const SizedBox(height: 32),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 32),
-                  // Info cards
-                  GlassCard(
-                    child: Column(
-                      children: [
-                        _InfoRow(
-                          icon: Icons.phone_outlined,
-                          label: 'Phone',
-                          value: '+1 (555) 123-4567',
-                        ),
-                        Divider(
-                          color: cs.outline.withValues(alpha: 0.2),
-                        ),
-                        _InfoRow(
-                          icon: Icons.email_outlined,
-                          label: 'Email',
-                          value: _userEmail,
-                        ),
-                        Divider(
-                          color: cs.outline.withValues(alpha: 0.2),
-                        ),
-                        _InfoRow(
-                          icon: Icons.badge_outlined,
-                          label: 'Role',
-                          value: 'Family Admin',
-                        ),
-                        Divider(
-                          color: cs.outline.withValues(alpha: 0.2),
-                        ),
-                        _InfoRow(
-                          icon: Icons.emergency_outlined,
-                          label: 'Emergency',
-                          value: '+1 (555) 987-6543',
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // Buttons
-                  _buildButton(
-                    'Edit Profile',
-                    Icons.edit_outlined,
-                    cs.primary,
-                    () => context.push('/edit-profile', extra: {
-                      'name': _userName,
-                      'phone': '+1 (555) 123-4567',
-                      'email': _userEmail,
-                      'emergency': '+1 (555) 987-6543',
-                    }),
-                    isDark,
-                  ),
-                  const SizedBox(height: 12),
-                  _buildButton(
-                    'Share Profile',
-                    Icons.share_outlined,
-                    cs.secondary,
-                    () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Profile link copied to clipboard'),
-                        ),
-                      );
-                    },
-                    isDark,
-                  ),
-                  const SizedBox(height: 32),
-                ],
-              ),
-            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGradientAvatar(ColorScheme cs) {
+    return Container(
+      width: 124,
+      height: 124,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [cs.primary, cs.secondary, cs.tertiary],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          _userInitial,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+            fontSize: 50,
           ),
         ),
       ),
