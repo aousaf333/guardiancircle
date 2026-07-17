@@ -6,6 +6,7 @@ import 'package:guardiancircle/app/auth_service.dart';
 import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/app/theme_state.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/services/privacy_settings_service.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
 import 'package:guardiancircle/shared/widgets/app_bar_icon_button.dart';
 
@@ -22,6 +23,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   late final Animation<double> _fadeAnim;
   late final StaggeredSlideIns _slideIns;
   late final AuthService _authService;
+  late final PrivacySettingsService _privacyService;
 
   bool _isDarkMode = true;
   bool _notificationsEnabled = true;
@@ -33,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   void initState() {
     super.initState();
     _authService = AuthService.defaultClient();
+    _privacyService = PrivacySettingsService.defaultClient();
     _isDarkMode = themeNotifier.value == ThemeMode.dark;
     _fadeController = AnimationController(
       vsync: this,
@@ -49,6 +52,52 @@ class _SettingsScreenState extends State<SettingsScreen>
     _slideIns = StaggeredSlideIns(controller: _slideController, count: 10);
     _fadeController.forward();
     _slideController.forward();
+    _loadPrivacySettings();
+  }
+
+  Future<void> _loadPrivacySettings() async {
+    try {
+      final settings = await _privacyService.fetchSettings();
+      if (mounted) {
+        setState(() {
+          _locationSharing = settings.locationSharing;
+          _privacyMode = settings.invisibleMode;
+          _notificationsEnabled = settings.notificationsEnabled;
+        });
+      }
+    } catch (e) {
+      debugPrint('[Settings] Failed to load privacy settings: $e');
+    }
+  }
+
+  Future<void> _savePrivacySettings() async {
+    final settings = PrivacySettingsModel(
+      locationSharing: _locationSharing,
+      invisibleMode: _privacyMode,
+      notificationsEnabled: _notificationsEnabled,
+    );
+    try {
+      debugPrint('[Settings] Saving privacy settings – invisible_mode=${settings.invisibleMode}');
+      await _privacyService.saveSettings(settings);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Settings saved'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[Settings] Failed to save privacy settings: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save: $e'),
+            backgroundColor: AppTheme.danger,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -417,10 +466,15 @@ class _SettingsScreenState extends State<SettingsScreen>
           subtitle: 'Push, email alerts',
           trailing: Switch(
             value: _notificationsEnabled,
-            onChanged: (v) => setState(() => _notificationsEnabled = v),
+            onChanged: (v) {
+              setState(() => _notificationsEnabled = v);
+              _savePrivacySettings();
+            },
           ),
-          onTap: () =>
-              setState(() => _notificationsEnabled = !_notificationsEnabled),
+          onTap: () {
+            setState(() => _notificationsEnabled = !_notificationsEnabled);
+            _savePrivacySettings();
+          },
         ),
         _SettingsTile(
           icon: Icons.dark_mode_outlined,
@@ -446,9 +500,15 @@ class _SettingsScreenState extends State<SettingsScreen>
           subtitle: 'Hide from others',
           trailing: Switch(
             value: _privacyMode,
-            onChanged: (v) => setState(() => _privacyMode = v),
+            onChanged: (v) {
+              setState(() => _privacyMode = v);
+              _savePrivacySettings();
+            },
           ),
-          onTap: () => setState(() => _privacyMode = !_privacyMode),
+          onTap: () {
+            setState(() => _privacyMode = !_privacyMode);
+            _savePrivacySettings();
+          },
           isLast: true,
         ),
       ],
@@ -466,10 +526,15 @@ class _SettingsScreenState extends State<SettingsScreen>
           subtitle: 'Share location with family',
           trailing: Switch(
             value: _locationSharing,
-            onChanged: (v) => setState(() => _locationSharing = v),
+            onChanged: (v) {
+              setState(() => _locationSharing = v);
+              _savePrivacySettings();
+            },
           ),
-          onTap: () =>
-              setState(() => _locationSharing = !_locationSharing),
+          onTap: () {
+            setState(() => _locationSharing = !_locationSharing);
+            _savePrivacySettings();
+          },
         ),
         _SettingsTile(
           icon: Icons.warning_amber_rounded,
@@ -488,7 +553,7 @@ class _SettingsScreenState extends State<SettingsScreen>
           iconColor: cs.primary,
           title: 'Emergency Contacts',
           subtitle: 'Manage emergency contacts',
-          onTap: () => context.push('/sos'),
+          onTap: () => context.push('/emergency-contacts'),
           isLast: true,
         ),
       ],
@@ -582,9 +647,9 @@ class _SettingsScreenState extends State<SettingsScreen>
             ),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              context.go('/login');
+              await _handleLogout(context);
             },
             child: const Text(
               'Log Out',
@@ -594,6 +659,27 @@ class _SettingsScreenState extends State<SettingsScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _handleLogout(BuildContext context) async {
+    try {
+      await _authService.signOut();
+      updateProfile(null);
+      themeNotifier.value = ThemeMode.dark;
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      if (context.mounted) {
+        context.go('/login');
+      }
+    } catch (e) {
+      if (context.mounted) {
+        updateProfile(null);
+        themeNotifier.value = ThemeMode.dark;
+        PaintingBinding.instance.imageCache.clear();
+        PaintingBinding.instance.imageCache.clearLiveImages();
+        context.go('/login');
+      }
+    }
   }
 
   void _showHelpDialog(

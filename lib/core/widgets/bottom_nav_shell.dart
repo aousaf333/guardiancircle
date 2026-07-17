@@ -46,6 +46,11 @@ class _PremiumBottomNavBar extends StatelessWidget {
       label: 'Home',
     ),
     _NavTabData(
+      activeIcon: Icons.map_rounded,
+      inactiveIcon: Icons.map_outlined,
+      label: 'Map',
+    ),
+    _NavTabData(
       activeIcon: Icons.notifications_active_rounded,
       inactiveIcon: Icons.notifications_outlined,
       label: 'Alerts',

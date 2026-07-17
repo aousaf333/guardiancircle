@@ -14,7 +14,10 @@ import 'package:guardiancircle/features/home/presentation/screens/location_detai
 import 'package:guardiancircle/features/family/presentation/screens/member_details_screen.dart';
 import 'package:guardiancircle/features/notifications/presentation/screens/notification_details_screen.dart';
 import 'package:guardiancircle/features/profile/presentation/screens/edit_profile_screen.dart';
+import 'package:guardiancircle/features/settings/presentation/screens/emergency_contacts_screen.dart';
+import 'package:guardiancircle/features/map/presentation/screens/map_screen.dart';
 import 'package:guardiancircle/core/widgets/bottom_nav_shell.dart';
+import 'package:guardiancircle/services/supabase_service.dart';
 
 CustomTransitionPage<void> _buildFadePage(Widget child, {LocalKey? key}) {
   return CustomTransitionPage<void>(
@@ -135,6 +138,21 @@ CustomTransitionPage<void> _buildScalePage(Widget child, {LocalKey? key}) {
 }
 
 final GoRouter appRouter = GoRouter(
+  redirect: (BuildContext context, GoRouterState state) {
+    final isLoggedIn = SupabaseService.client.auth.currentUser != null;
+    final isAuthRoute = state.matchedLocation == '/login' ||
+        state.matchedLocation == '/signup' ||
+        state.matchedLocation == '/';
+    final isProtectedRoute = !isAuthRoute;
+
+    if (!isLoggedIn && isProtectedRoute) {
+      return '/login';
+    }
+    if (isLoggedIn && state.matchedLocation == '/login') {
+      return '/home';
+    }
+    return null;
+  },
   routes: <RouteBase>[
     GoRoute(
       path: '/',
@@ -169,6 +187,16 @@ final GoRouter appRouter = GoRouter(
               path: '/home',
               builder: (BuildContext context, GoRouterState state) {
                 return const HomeScreen();
+              },
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: <RouteBase>[
+            GoRoute(
+              path: '/map',
+              builder: (BuildContext context, GoRouterState state) {
+                return const MapScreen();
               },
             ),
           ],
@@ -285,5 +313,15 @@ final GoRouter appRouter = GoRouter(
         );
       },
     ),
+    GoRoute(
+      path: '/emergency-contacts',
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        return _buildSlideRightPage(
+          const EmergencyContactsScreen(),
+          key: state.pageKey,
+        );
+      },
+    ),
+
   ],
 );
