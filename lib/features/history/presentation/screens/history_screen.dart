@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
 import 'package:guardiancircle/shared/widgets/app_bar_icon_button.dart';
@@ -227,6 +228,13 @@ class _HistoryScreenState extends State<HistoryScreen>
                           ],
                         ),
                         const Spacer(),
+                        AppBarIconButton(
+                          icon: Icons.route_rounded,
+                          onTap: () {
+                            context.push('/location-history');
+                          },
+                        ),
+                        const SizedBox(width: 6),
                         AppBarIconButton(
                           icon: Icons.file_download_outlined,
                           onTap: () {},

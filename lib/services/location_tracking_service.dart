@@ -8,9 +8,14 @@ class LocationTrackingService {
   DateTime? _lastSupabaseUpdate;
   double _lastSupabaseLat = 0;
   double _lastSupabaseLng = 0;
+  DateTime? _lastHistoryUpdate;
+  double _lastHistoryLat = 0;
+  double _lastHistoryLng = 0;
 
   static const double _minDistanceMeters = 10;
   static const Duration _minTimeBetweenUpdates = Duration(seconds: 10);
+  static const double _historyMinDistanceMeters = 25;
+  static const Duration _historyMinTimeBetweenUpdates = Duration(minutes: 2);
 
   bool get isTracking => _positionSubscription != null;
 
@@ -94,6 +99,42 @@ class LocationTrackingService {
         },
         onConflict: 'user_id',
       );
+
+      await _saveLocationHistory(userId, position);
+    } catch (_) {}
+  }
+
+  Future<void> _saveLocationHistory(String userId, Position position) async {
+    try {
+      final now = DateTime.now();
+      final distance = _calculateDistance(
+        _lastHistoryLat,
+        _lastHistoryLng,
+        position.latitude,
+        position.longitude,
+      );
+      final timeSinceLastHistory = _lastHistoryUpdate != null
+          ? now.difference(_lastHistoryUpdate!)
+          : _historyMinTimeBetweenUpdates;
+      final shouldSaveHistory =
+          distance >= _historyMinDistanceMeters || timeSinceLastHistory >= _historyMinTimeBetweenUpdates;
+      if (!shouldSaveHistory) return;
+
+      _lastHistoryLat = position.latitude;
+      _lastHistoryLng = position.longitude;
+      _lastHistoryUpdate = now;
+
+      print('[LocationTracking] History Saved: userId=$userId, '
+          'lat=${position.latitude}, lng=${position.longitude}');
+      await SupabaseService.client.from('location_history').insert({
+        'user_id': userId,
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy': position.accuracy,
+        'speed': position.speed,
+        'heading': position.heading,
+        'recorded_at': DateTime.now().toUtc().toIso8601String(),
+      });
     } catch (_) {}
   }
 
@@ -118,6 +159,9 @@ class LocationTrackingService {
     _lastSupabaseUpdate = null;
     _lastSupabaseLat = 0;
     _lastSupabaseLng = 0;
+    _lastHistoryUpdate = null;
+    _lastHistoryLat = 0;
+    _lastHistoryLng = 0;
   }
 
   void dispose() {

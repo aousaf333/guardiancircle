@@ -10,6 +10,7 @@ import 'package:guardiancircle/models/family_member_location.dart';
 import 'package:guardiancircle/services/family_service.dart';
 import 'package:guardiancircle/services/location_tracking_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -39,9 +40,14 @@ class _MapScreenState extends State<MapScreen> {
   RealtimeChannel? _realtimeSubscription;
   String? _selectedMemberId;
   int _familyLoadGeneration = 0;
+  DateTime? _lastMapHistoryUpdate;
+  double _lastMapHistoryLat = 0;
+  double _lastMapHistoryLng = 0;
 
   static const _defaultCenter = LatLng(20.0, 0.0);
   static const _defaultZoom = 2.0;
+  static const double _historyMinDistanceMeters = 25;
+  static const Duration _historyMinTimeBetweenUpdates = Duration(minutes: 2);
 
   static const List<Color> _markerColors = [
     Color(0xFF3B82F6),
@@ -192,9 +198,45 @@ class _MapScreenState extends State<MapScreen> {
         onConflict: 'user_id',
       );
       print('[Map] _forceUpsert: success for userId=$userId');
+
+      await _saveLocationHistory(userId, position);
     } catch (e) {
       print('[Map] _forceUpsert: FAILED: $e');
     }
+  }
+
+  Future<void> _saveLocationHistory(String userId, Position position) async {
+    try {
+      final now = DateTime.now();
+      final distance = Geolocator.distanceBetween(
+        _lastMapHistoryLat,
+        _lastMapHistoryLng,
+        position.latitude,
+        position.longitude,
+      );
+      final timeSinceLastHistory = _lastMapHistoryUpdate != null
+          ? now.difference(_lastMapHistoryUpdate!)
+          : _historyMinTimeBetweenUpdates;
+      final shouldSaveHistory =
+          distance >= _historyMinDistanceMeters || timeSinceLastHistory >= _historyMinTimeBetweenUpdates;
+      if (!shouldSaveHistory) return;
+
+      _lastMapHistoryLat = position.latitude;
+      _lastMapHistoryLng = position.longitude;
+      _lastMapHistoryUpdate = now;
+
+      print('[Map] History Saved: userId=$userId, '
+          'lat=${position.latitude}, lng=${position.longitude}');
+      await SupabaseService.client.from('location_history').insert({
+        'user_id': userId,
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy': position.accuracy,
+        'speed': position.speed,
+        'heading': position.heading,
+        'recorded_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -237,13 +279,15 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final generation = ++_familyLoadGeneration;
-    print('[Map] _loadFamilyMembers: START familyId=$familyId gen=$generation');
+    final supabase = SupabaseService.client;
+    final currentUserId = supabase.auth.currentUser?.id;
+    print('[Map] ========================================');
+    print('[Map] _loadFamilyMembers: START');
+    print('[Map]   familyId=$familyId');
+    print('[Map]   currentUserId=$currentUserId');
+    print('[Map]   gen=$generation');
 
     try {
-      final supabase = SupabaseService.client;
-      final currentUserId = supabase.auth.currentUser?.id;
-      print('[Map] _loadFamilyMembers: currentUserId=$currentUserId');
-
       // --- Step 1: family_members ---
       List<Map<String, dynamic>> memberList = [];
       try {
@@ -252,13 +296,16 @@ class _MapScreenState extends State<MapScreen> {
             .select('user_id, role')
             .eq('family_id', familyId);
         memberList = List<Map<String, dynamic>>.from(memberRows);
-        print('[Map] _loadFamilyMembers: family_members rows=${memberList.length}');
+        print('[Map] Step1 family_members: ${memberList.length} rows');
+        for (final row in memberList) {
+          print('[Map]   member: user_id=${row["user_id"]}, role=${row["role"]}');
+        }
       } catch (e) {
-        print('[Map] _loadFamilyMembers: family_members QUERY FAILED: $e');
+        print('[Map] Step1 family_members FAILED: $e');
       }
 
       if (memberList.isEmpty) {
-        print('[Map] _loadFamilyMembers: no members in family, abort');
+        print('[Map] Step1: ZERO members for familyId=$familyId → no markers');
         _cancelRealtimeSubscription();
         if (mounted && generation == _familyLoadGeneration) {
           setState(() => _familyMembers = []);
@@ -267,22 +314,28 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       final userIds = memberList.map((r) => r['user_id'] as String).toList();
-      print('[Map] _loadFamilyMembers: userIds=$userIds');
+      print('[Map]   userIds=$userIds');
 
       // --- Step 2: user_locations ---
       final locationMap = <String, Map<String, dynamic>>{};
       try {
         final locationRows = await supabase
             .from('user_locations')
-            .select('user_id, latitude, longitude, updated_at, battery')
+            .select('user_id, latitude, longitude, updated_at')
             .inFilter('user_id', userIds);
-        for (final row in (locationRows as List)) {
+        final locList = List<Map<String, dynamic>>.from(locationRows as List);
+        print('[Map] Step2 user_locations: ${locList.length} rows');
+        for (final row in locList) {
+          print('[Map]   loc: user_id=${row["user_id"]}, '
+              'lat=${row["latitude"]}, lng=${row["longitude"]}, '
+              'updated_at=${row["updated_at"]}');
           locationMap[row['user_id'] as String] = row;
         }
-        print('[Map] _loadFamilyMembers: user_locations rows=${locationMap.length}');
       } catch (e) {
-        print('[Map] _loadFamilyMembers: user_locations QUERY FAILED: $e');
+        print('[Map] Step2 user_locations FAILED: $e');
       }
+      print('[Map]   locationMap has ${locationMap.length} entries '
+          'for ${userIds.length} userIds');
 
       // --- Step 3: profiles ---
       final profileMap = <String, Map<String, dynamic>>{};
@@ -291,13 +344,16 @@ class _MapScreenState extends State<MapScreen> {
             .from('profiles')
             .select('id, name, photo_url')
             .inFilter('id', userIds);
-        for (final row in (profileRows as List)) {
+        final pList = List<Map<String, dynamic>>.from(profileRows as List);
+        print('[Map] Step3 profiles: ${pList.length} rows');
+        for (final row in pList) {
+          print('[Map]   profile: id=${row["id"]}, name=${row["name"]}');
           profileMap[row['id'] as String] = row;
         }
-        print('[Map] _loadFamilyMembers: profiles rows=${profileMap.length}');
       } catch (e) {
-        print('[Map] _loadFamilyMembers: profiles QUERY FAILED: $e');
+        print('[Map] Step3 profiles FAILED: $e');
       }
+      print('[Map]   profileMap has ${profileMap.length} entries');
 
       // --- Step 4: merge ---
       final family = _families.cast<FamilyModel?>().firstWhere(
@@ -305,7 +361,6 @@ class _MapScreenState extends State<MapScreen> {
             orElse: () => null,
           );
       final createdBy = family?.createdBy;
-      print('[Map] _loadFamilyMembers: createdBy=$createdBy');
 
       final members = <FamilyMemberLocation>[];
       final skipped = <String>[];
@@ -316,7 +371,18 @@ class _MapScreenState extends State<MapScreen> {
         final loc = locationMap[uid];
 
         if (loc == null) {
-          skipped.add('$uid(no location)');
+          final reason = 'no location in locationMap for $uid';
+          skipped.add(reason);
+          print('[Map]   SKIP $uid: $reason');
+          continue;
+        }
+
+        final locLat = loc['latitude'];
+        final locLng = loc['longitude'];
+        if (locLat == null || locLng == null) {
+          final reason = 'null lat/lng for $uid (lat=$locLat, lng=$locLng)';
+          skipped.add(reason);
+          print('[Map]   SKIP $uid: $reason');
           continue;
         }
 
@@ -326,7 +392,7 @@ class _MapScreenState extends State<MapScreen> {
         final isOwner = m['role'] == 'owner' || uid == createdBy;
         final role = isOwner ? 'Owner' : (m['role'] as String? ?? 'Member');
 
-        members.add(FamilyMemberLocation(
+        final memberLoc = FamilyMemberLocation(
           userId: uid,
           name: name,
           role: role,
@@ -334,30 +400,48 @@ class _MapScreenState extends State<MapScreen> {
           color: uid == currentUserId
               ? const Color(0xFF10B981)
               : _markerColors[i % _markerColors.length],
-          latitude: (loc['latitude'] as num).toDouble(),
-          longitude: (loc['longitude'] as num).toDouble(),
-          lastUpdated: DateTime.parse(loc['updated_at'] as String),
+          latitude: (locLat as num).toDouble(),
+          longitude: (locLng as num).toDouble(),
+          lastUpdated: loc['updated_at'] != null
+              ? DateTime.parse(loc['updated_at'] as String)
+              : DateTime.now(),
           battery: loc['battery'] != null
               ? (loc['battery'] as num).toDouble()
               : null,
-        ));
+        );
+        members.add(memberLoc);
+        print('[Map]   MARKER $uid: name=$name, role=$role, '
+            'lat=${memberLoc.latitude}, lng=${memberLoc.longitude}');
       }
 
-      print('[Map] _loadFamilyMembers: MARKERS CREATED=${members.length} gen=$generation');
-      if (skipped.isNotEmpty) {
-        print('[Map] _loadFamilyMembers: SKIPPED=$skipped');
-      }
+      print('[Map] ---- SUMMARY gen=$generation ----');
+      print('[Map]   totalMembers=${memberList.length}');
+      print('[Map]   membersWithLocation=${members.length}');
+      print('[Map]   skipped=${skipped.length}: $skipped');
+      print('[Map]   MARKERS CREATED=${members.length}');
+
       if (members.isEmpty) {
-        print('[Map] _loadFamilyMembers: *** NO MARKERS *** '
-            'membersWithLocation=0 totalMembers=${memberList.length}');
+        print('[Map] *** NO MARKERS *** reasons:');
+        if (locationMap.isEmpty) {
+          print('[Map]   → locationMap is EMPTY – user_locations query returned 0 rows');
+        }
+        if (profileMap.isEmpty) {
+          print('[Map]   → profileMap is EMPTY – profiles query returned 0 rows');
+        }
+        print('[Map]   → ${skipped.length} members skipped');
       }
 
       _cancelRealtimeSubscription();
 
       if (mounted && generation == _familyLoadGeneration) {
         setState(() => _familyMembers = members);
+        print('[Map] setState: _familyMembers updated with ${members.length} markers');
         _subscribeToRealtime(familyId, userIds, currentUserId);
+      } else {
+        print('[Map] STALE gen=$generation (current=$_familyLoadGeneration) – state NOT updated');
       }
+
+      print('[Map] ========================================');
     } catch (e, st) {
       print('[Map] _loadFamilyMembers: FATAL ERROR=$e');
       print('[Map] _loadFamilyMembers: $st');
@@ -482,45 +566,48 @@ class _MapScreenState extends State<MapScreen> {
               ..._families.map(
                 (f) {
                   final isSelected = f.id == _selectedFamilyId;
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? cs.primary.withValues(alpha: 0.15)
-                            : cs.surfaceContainerHighest
-                                .withValues(alpha: 0.5),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Center(
-                        child: Text(
-                          f.name.characters.first.toUpperCase(),
-                          style: TextStyle(
-                            color:
-                                isSelected ? cs.primary : cs.onSurface,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
+                  return Material(
+                    color: Colors.transparent,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? cs.primary.withValues(alpha: 0.15)
+                              : cs.surfaceContainerHighest
+                                  .withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Center(
+                          child: Text(
+                            f.name.characters.first.toUpperCase(),
+                            style: TextStyle(
+                              color:
+                                  isSelected ? cs.primary : cs.onSurface,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    title: Text(
-                      f.name,
-                      style: TextStyle(
-                        fontWeight:
-                            isSelected ? FontWeight.w700 : FontWeight.w500,
+                      title: Text(
+                        f.name,
+                        style: TextStyle(
+                          fontWeight:
+                              isSelected ? FontWeight.w700 : FontWeight.w500,
+                        ),
                       ),
+                      trailing: isSelected
+                          ? Icon(Icons.check_circle_rounded,
+                              color: cs.primary, size: 20)
+                          : null,
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _selectFamily(f.id);
+                      },
                     ),
-                    trailing: isSelected
-                        ? Icon(Icons.check_circle_rounded,
-                            color: cs.primary, size: 20)
-                        : null,
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _selectFamily(f.id);
-                    },
                   );
                 },
               ),
@@ -1114,6 +1201,25 @@ class _MapScreenState extends State<MapScreen> {
                     _buildFamilySelectorButton(cs, isDark),
                     const SizedBox(width: 8),
                   ],
+                  GestureDetector(
+                    onTap: () => context.push('/location-history'),
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.04),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.route_rounded,
+                        color: cs.primary,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   if (_isLoading)
                     SizedBox(
                       width: 18,
