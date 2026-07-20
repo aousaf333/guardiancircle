@@ -10,6 +10,7 @@ import 'package:guardiancircle/models/family_member_location.dart';
 import 'package:guardiancircle/services/family_service.dart';
 import 'package:guardiancircle/services/location_tracking_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
+import 'package:guardiancircle/services/emergency_alert_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -674,6 +675,12 @@ class _MapScreenState extends State<MapScreen> {
                 child: _buildMemberPopup(_selectedMemberId!),
               ),
             ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 70,
+            left: 16,
+            right: 16,
+            child: _SosAlertOverlay(),
+          ),
         ],
       ),
     );
@@ -1411,6 +1418,239 @@ class _FamilyMemberMarker extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SOS Alert Overlay
+// ---------------------------------------------------------------------------
+
+class _SosAlertOverlay extends StatefulWidget {
+  @override
+  State<_SosAlertOverlay> createState() => _SosAlertOverlayState();
+}
+
+class _SosAlertOverlayState extends State<_SosAlertOverlay>
+    with SingleTickerProviderStateMixin {
+  EmergencyAlertWithSender? _currentAlert;
+  Timer? _dismissTimer;
+  late final AnimationController _animController;
+  late final Animation<double> _fadeAnim;
+  late final Animation<Offset> _slideAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _fadeAnim = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOutCubic,
+    );
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, -0.3),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOutCubic,
+    ));
+    EmergencyAlertService.activeAlertsNotifier.addListener(_onAlertsChanged);
+  }
+
+  @override
+  void dispose() {
+    EmergencyAlertService.activeAlertsNotifier
+        .removeListener(_onAlertsChanged);
+    _dismissTimer?.cancel();
+    _animController.dispose();
+    super.dispose();
+  }
+
+  void _onAlertsChanged() {
+    final alerts = EmergencyAlertService.activeAlertsNotifier.value;
+    if (alerts.isEmpty) {
+      _dismissAlert();
+      return;
+    }
+    final newest = alerts.first;
+    if (_currentAlert != null && _currentAlert!.alert.id == newest.alert.id) {
+      return;
+    }
+    _showAlert(newest);
+  }
+
+  void _showAlert(EmergencyAlertWithSender alert) {
+    _dismissTimer?.cancel();
+    setState(() => _currentAlert = alert);
+    _animController.forward(from: 0.0);
+    _dismissTimer = Timer(const Duration(seconds: 10), _dismissAlert);
+    print('[SOS Map Overlay] Showing alert: alertId=${alert.alert.id}');
+  }
+
+  void _dismissAlert() {
+    _dismissTimer?.cancel();
+    _animController.reverse().then((_) {
+      if (mounted) setState(() => _currentAlert = null);
+    });
+    print('[SOS Map Overlay] Dismissed');
+  }
+
+  Future<void> _dismissPermanently() async {
+    if (_currentAlert == null) return;
+    final alertId = _currentAlert!.alert.id;
+    final service = EmergencyAlertService.defaultClient();
+    await service.dismissNotification(alertId);
+    _dismissAlert();
+    print('[SOS Map Overlay] Permanently dismissed: alertId=$alertId');
+  }
+
+  String _elapsedText(DateTime createdAt) {
+    final d = DateTime.now().difference(createdAt);
+    if (d.inSeconds < 10) return 'Just now';
+    if (d.inSeconds < 60) return '${d.inSeconds}s ago';
+    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+    return '${d.inHours}h ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_currentAlert == null) return const SizedBox.shrink();
+
+    final alert = _currentAlert!;
+    final initial =
+        alert.senderName.characters.first.toUpperCase();
+
+    return SlideTransition(
+      position: _slideAnim,
+      child: FadeTransition(
+        opacity: _fadeAnim,
+        child: GestureDetector(
+          onTap: () {
+            print('[SOS Map Overlay] Tapped: navigating to '
+                'alertId=${alert.alert.id}');
+            context.push('/sos-alert-detail/${alert.alert.id}');
+          },
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFDC2626), Color(0xFFB91C1C)],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.danger.withValues(alpha: 0.4),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: alert.senderPhotoUrl != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.network(
+                            alert.senderPhotoUrl!,
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => Center(
+                              child: Text(
+                                initial,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      : Center(
+                          child: Text(
+                            initial,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'EMERGENCY',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 10,
+                          letterSpacing: 1.0,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${alert.senderName} needs help',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _elapsedText(alert.alert.createdAt),
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () {
+                    print('[SOS Map Overlay] Close button tapped');
+                    _dismissPermanently();
+                  },
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.close_rounded,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

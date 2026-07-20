@@ -1,19 +1,24 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
-import 'package:guardiancircle/shared/widgets/glass_card.dart';
+import 'package:guardiancircle/services/emergency_alert_service.dart';
 import 'package:guardiancircle/shared/widgets/section_header.dart';
+import 'package:geolocator/geolocator.dart';
 
 class SosScreen extends StatefulWidget {
-  const SosScreen({super.key});
+  final String? existingAlertId;
+  const SosScreen({super.key, this.existingAlertId});
   @override
   State<SosScreen> createState() => _SosScreenState();
 }
 
 class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
+  final EmergencyAlertService _service = EmergencyAlertService.defaultClient();
   bool _sosActive = false;
-  int _countdown = 10;
-  Timer? _countdownTimer;
+  bool _isLoading = false;
+  String? _activeAlertId;
+  Timer? _elapsedTimer;
+  int _elapsedSeconds = 0;
   late final AnimationController _fadeController;
   late final AnimationController _sosPulseController;
   late final Animation<double> _fadeAnim;
@@ -34,50 +39,155 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
       curve: Curves.easeOutCubic,
     );
     _fadeController.forward();
-    _activateSos();
+
+    if (widget.existingAlertId != null) {
+      _activeAlertId = widget.existingAlertId;
+      _sosActive = true;
+      _startElapsedTimer();
+      _service.startLocationUpdates(widget.existingAlertId!);
+    } else {
+      _activateSos();
+    }
   }
 
   @override
   void dispose() {
-    _countdownTimer?.cancel();
+    _elapsedTimer?.cancel();
     _fadeController.dispose();
     _sosPulseController.dispose();
+    _service.stopLocationUpdates();
     super.dispose();
   }
 
-  void _activateSos() {
-    setState(() {
-      _sosActive = true;
-      _countdown = 10;
-    });
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_countdown <= 1) {
-        timer.cancel();
-        setState(() {
-          _sosActive = false;
-          _countdown = 0;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Emergency contacts have been notified')),
-          );
-        }
-      } else {
-        setState(() => _countdown--);
-      }
+  void _startElapsedTimer() {
+    _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _elapsedSeconds++);
     });
   }
 
-  void _cancelSos() {
-    _countdownTimer?.cancel();
-    setState(() {
-      _sosActive = false;
-      _countdown = 0;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('SOS alert cancelled')),
+  String get _elapsedText {
+    final m = _elapsedSeconds ~/ 60;
+    final s = _elapsedSeconds % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _activateSos() async {
+    setState(() => _isLoading = true);
+
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location services are disabled')),
+          );
+          setState(() => _isLoading = false);
+        }
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission != LocationPermission.always &&
+          permission != LocationPermission.whileInUse) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permission required')),
+          );
+          setState(() => _isLoading = false);
+        }
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+
+      print('[SOS] Current position: ${position.latitude}, ${position.longitude}');
+
+      final alert = await _service.createSosAlert(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+
+      if (alert != null && mounted) {
+        print('[SOS] SOS Created: alertId=${alert.id}');
+        setState(() {
+          _sosActive = true;
+          _isLoading = false;
+          _activeAlertId = alert.id;
+        });
+        _startElapsedTimer();
+        _service.startLocationUpdates(alert.id);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('SOS Alert sent to all family members')),
+        );
+      }
+    } catch (e) {
+      print('[SOS] _activateSos: ERROR=$e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send SOS: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelSos() async {
+    if (_activeAlertId == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel SOS Alert?'),
+        content: const Text(
+          'This will cancel the emergency alert. Family members will be notified.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep Active'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+            child: const Text('Cancel SOS'),
+          ),
+        ],
+      ),
     );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await _service.cancelSosAlert(_activeAlertId!);
+      print('[SOS] SOS Cancelled: alertId=$_activeAlertId');
+      _service.stopLocationUpdates();
+      _elapsedTimer?.cancel();
+      setState(() {
+        _sosActive = false;
+        _activeAlertId = null;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('SOS alert cancelled')),
+        );
+      }
+    } catch (e) {
+      print('[SOS] _cancelSos: ERROR=$e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to cancel: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -117,7 +227,19 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
                   Row(
                     children: [
                       GestureDetector(
-                        onTap: () => Navigator.pop(context),
+                        onTap: () {
+                          if (_sosActive) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'SOS is still active. Cancel it before leaving.',
+                                ),
+                              ),
+                            );
+                          } else {
+                            Navigator.pop(context);
+                          }
+                        },
                         child: Container(
                           width: 42,
                           height: 42,
@@ -146,18 +268,87 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
                           letterSpacing: -0.5,
                         ),
                       ),
+                      if (_sosActive) ...[
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppTheme.danger.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 7,
+                                height: 7,
+                                decoration: const BoxDecoration(
+                                  color: AppTheme.danger,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Color(0x80EF4444),
+                                      blurRadius: 4,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              const Text(
+                                'ACTIVE',
+                                style: TextStyle(
+                                  color: AppTheme.danger,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 24),
                   _buildSosButton(cs, isDark),
                   const SizedBox(height: 20),
-                  if (_sosActive) ...[
+                  if (_isLoading)
+                    const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
+                    )
+                  else if (_sosActive) ...[
                     Text(
-                      'Alerting in $_countdown seconds',
+                      'Emergency Active',
                       style: const TextStyle(
                         color: AppTheme.danger,
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Elapsed: $_elapsedText',
+                      style: TextStyle(
+                        color: AppTheme.dangerLight.withValues(alpha: 0.7),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'All family members are being alerted',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontSize: 13,
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -188,14 +379,10 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
                     ),
                   ],
                   const SizedBox(height: 28),
-                  const SectionHeader(title: 'Quick Actions'),
-                  _buildQuickActions(cs, isDark),
-                  const SizedBox(height: 20),
-                  const SectionHeader(title: 'Emergency Contacts'),
-                  _buildEmergencyContacts(cs, isDark),
-                  const SizedBox(height: 20),
-                  const SectionHeader(title: 'Safety Tips'),
-                  _buildSafetyTips(cs, isDark),
+                  if (!_sosActive) ...[
+                    const SectionHeader(title: 'Safety Tips'),
+                    _buildSafetyTips(cs, isDark),
+                  ],
                   const SizedBox(height: 100),
                 ],
               ),
@@ -262,7 +449,7 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
             const SizedBox(height: 4),
             Text(
               _sosActive
-                  ? 'All members are being alerted'
+                  ? 'Help is on the way'
                   : 'Press to activate emergency alert',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.8),
@@ -272,157 +459,6 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildQuickActions(ColorScheme cs, bool isDark) {
-    final actions = [
-      _SosAction(
-        icon: Icons.share_location_rounded,
-        label: 'Share Location',
-        color: cs.primary,
-      ),
-      _SosAction(
-        icon: Icons.mic_rounded,
-        label: 'Audio',
-        color: AppTheme.tertiary,
-      ),
-      _SosAction(
-        icon: Icons.camera_alt_rounded,
-        label: 'Photo',
-        color: const Color(0xFFEC4899),
-      ),
-      _SosAction(
-        icon: Icons.flashlight_on_rounded,
-        label: 'Flashlight',
-        color: AppTheme.warning,
-      ),
-    ];
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
-        children: actions
-            .map(
-              (a) => Expanded(
-                child: GestureDetector(
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('${a.label} activated'),
-                        duration: const Duration(seconds: 1),
-                      ),
-                    );
-                  },
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 54,
-                        height: 54,
-                        decoration: BoxDecoration(
-                          color: a.color.withValues(alpha: isDark ? 0.12 : 0.08),
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: Icon(a.icon, color: a.color, size: 24),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        a.label,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: cs.onSurface.withValues(alpha: 0.55),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            )
-            .toList(),
-      ),
-    );
-  }
-
-  Widget _buildEmergencyContacts(ColorScheme cs, bool isDark) {
-    final contacts = [
-      _Contact(
-        name: 'Sarah Miller',
-        relation: 'Mom',
-        color: const Color(0xFFEC4899),
-      ),
-      _Contact(
-        name: 'James Miller',
-        relation: 'Dad',
-        color: const Color(0xFF3B82F6),
-      ),
-    ];
-
-    return Column(
-      children: contacts
-          .map(
-            (c) => GlassCard(
-              margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                children: [
-                  Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          c.color,
-                          c.color.withValues(alpha: 0.6),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Center(
-                      child: Text(
-                        c.name.characters.first,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          c.name,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: cs.onSurface,
-                            fontSize: 15,
-                          ),
-                        ),
-                        Text(
-                          c.relation,
-                          style: TextStyle(
-                            color: cs.onSurface.withValues(alpha: 0.35),
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    Icons.phone_rounded,
-                    color: AppTheme.success,
-                    size: 22,
-                  ),
-                ],
-              ),
-            ),
-          )
-          .toList(),
     );
   }
 
@@ -503,28 +539,6 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
           .toList(),
     );
   }
-}
-
-class _SosAction {
-  final IconData icon;
-  final String label;
-  final Color color;
-  const _SosAction({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-}
-
-class _Contact {
-  final String name;
-  final String relation;
-  final Color color;
-  const _Contact({
-    required this.name,
-    required this.relation,
-    required this.color,
-  });
 }
 
 class _Tip {

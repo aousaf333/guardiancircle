@@ -17,6 +17,7 @@ import 'package:guardiancircle/features/profile/presentation/screens/edit_profil
 import 'package:guardiancircle/features/settings/presentation/screens/emergency_contacts_screen.dart';
 import 'package:guardiancircle/features/map/presentation/screens/map_screen.dart';
 import 'package:guardiancircle/features/location_history/presentation/screens/location_history_screen.dart';
+import 'package:guardiancircle/features/sos/presentation/screens/sos_alert_detail_screen.dart';
 import 'package:guardiancircle/core/widgets/bottom_nav_shell.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 
@@ -328,6 +329,16 @@ final GoRouter appRouter = GoRouter(
       pageBuilder: (BuildContext context, GoRouterState state) {
         return _buildSlideRightPage(
           const LocationHistoryScreen(),
+          key: state.pageKey,
+        );
+      },
+    ),
+    GoRoute(
+      path: '/sos-alert-detail/:alertId',
+      pageBuilder: (BuildContext context, GoRouterState state) {
+        final alertId = state.pathParameters['alertId']!;
+        return _buildSlideRightPage(
+          SosAlertDetailScreen(alertId: alertId),
           key: state.pageKey,
         );
       },
