@@ -17,6 +17,7 @@ class BottomNavShell extends StatefulWidget {
 
 class _BottomNavShellState extends State<BottomNavShell> {
   late final EmergencyAlertService _alertService;
+  OverlayEntry? _bannerOverlay;
 
   @override
   void initState() {
@@ -24,11 +25,15 @@ class _BottomNavShellState extends State<BottomNavShell> {
     print('[BottomNavShell] initState');
     _alertService = EmergencyAlertService.defaultClient();
     _initAlertSubscription();
+    EmergencyAlertService.activeAlertsNotifier.addListener(_onAlertsChanged);
   }
 
   @override
   void dispose() {
     print('[BottomNavShell] dispose');
+    EmergencyAlertService.activeAlertsNotifier
+        .removeListener(_onAlertsChanged);
+    _removeOverlay();
     _alertService.dispose();
     super.dispose();
   }
@@ -50,20 +55,38 @@ class _BottomNavShellState extends State<BottomNavShell> {
     });
   }
 
+  void _onAlertsChanged() {
+    final alerts = EmergencyAlertService.activeAlertsNotifier.value;
+    if (alerts.isNotEmpty && _bannerOverlay == null) {
+      _insertOverlay();
+    } else if (alerts.isEmpty && _bannerOverlay != null) {
+      _removeOverlay();
+    }
+  }
+
+  void _insertOverlay() {
+    _bannerOverlay = OverlayEntry(
+      builder: (overlayContext) {
+        return Positioned(
+          top: MediaQuery.of(overlayContext).padding.top,
+          left: 0,
+          right: 0,
+          child: _EmergencyBanner(),
+        );
+      },
+    );
+    Overlay.of(context).insert(_bannerOverlay!);
+  }
+
+  void _removeOverlay() {
+    _bannerOverlay?.remove();
+    _bannerOverlay = null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          widget.navigationShell,
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _EmergencyBanner(),
-          ),
-        ],
-      ),
+      body: widget.navigationShell,
       bottomNavigationBar: _PremiumBottomNavBar(
         currentIndex: widget.navigationShell.currentIndex,
         onTap: (index) => widget.navigationShell.goBranch(
@@ -76,14 +99,19 @@ class _BottomNavShellState extends State<BottomNavShell> {
 }
 
 class _EmergencyBanner extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<EmergencyAlertWithSender>>(
-      valueListenable: EmergencyAlertService.activeAlertsNotifier,
-      builder: (_, alerts, _) {
-        if (alerts.isEmpty) return const SizedBox.shrink();
-        print('[SOS Banner] SOS Notification Shown: ${alerts.length} alerts');
-        return Column(
+ @override
+Widget build(BuildContext context) {
+  return ValueListenableBuilder<List<EmergencyAlertWithSender>>(
+    valueListenable: EmergencyAlertService.activeAlertsNotifier,
+    builder: (_, alerts, _) {
+      if (alerts.isEmpty) return const SizedBox.shrink();
+
+      print('[SOS Banner] SOS Notification Shown: ${alerts.length} alerts');
+
+      return Material(
+        color: Colors.transparent,
+        elevation: 8,
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: alerts
               .map((a) => _BannerTile(
@@ -91,12 +119,12 @@ class _EmergencyBanner extends StatelessWidget {
                     key: ValueKey('banner_${a.alert.id}'),
                   ))
               .toList(),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
 }
-
+}
 class _BannerTile extends StatefulWidget {
   final EmergencyAlertWithSender alertData;
   const _BannerTile({required this.alertData, super.key});
@@ -125,9 +153,11 @@ class _BannerTileState extends State<_BannerTile>
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
-    _dismissFade = CurvedAnimation(
-      parent: _dismissController,
-      curve: Curves.easeOut,
+    _dismissFade = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(
+        parent: _dismissController,
+        curve: Curves.easeOut,
+      ),
     );
     _dismissSlide = Tween<Offset>(
       begin: Offset.zero,
@@ -195,12 +225,7 @@ class _BannerTileState extends State<_BannerTile>
             child: GestureDetector(
               onTap: _isDismissing ? null : _navigateToDetail,
               child: Container(
-                margin: EdgeInsets.fromLTRB(
-                  16,
-                  MediaQuery.of(context).padding.top + 8,
-                  16,
-                  0,
-                ),
+                margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
