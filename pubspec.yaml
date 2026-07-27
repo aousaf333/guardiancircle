@@ -43,9 +43,9 @@ dependencies:
   latlong2: ^0.9.1
   shared_preferences: ^2.5.5
   uuid: ^4.5.3
-  flutter_local_notifications: ^22.0.1
-  firebase_core: ^4.11.0
-  firebase_messaging: ^16.4.1
+  flutter_local_notifications: ^22.2.0
+  firebase_core: ^4.12.1
+  firebase_messaging: ^16.4.3
 
 dev_dependencies:
   flutter_test:
