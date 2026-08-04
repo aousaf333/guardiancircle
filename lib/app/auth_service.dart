@@ -1,5 +1,6 @@
 import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/models/profile_model.dart';
+import 'package:guardiancircle/services/notification_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -14,8 +15,6 @@ class AuthException implements Exception {
 class AuthService {
   final SupabaseClient _supabaseClient;
 
-  /// When SUPABASE_URL is not provided, the app runs in placeholder mode
-  /// and accepts any non-empty credentials without calling Supabase.
   static bool get _isPlaceholder => SupabaseService.isPlaceholder;
 
   AuthService(this._supabaseClient);
@@ -50,6 +49,10 @@ class AuthService {
 
       await ensureProfile(response.user!);
       await _loadProfileForUser(response.user!.id);
+
+      // Save FCM token after signup
+      await NotificationService.saveTokenToSupabase();
+
       return response.user!;
     } on AuthException {
       rethrow;
@@ -66,7 +69,6 @@ class AuthService {
       throw const AuthException('Password is required.');
     }
 
-    // Placeholder mode: accept any valid credentials without Supabase.
     if (_isPlaceholder) return null;
 
     try {
@@ -81,6 +83,10 @@ class AuthService {
 
       await ensureProfile(response.user!);
       await _loadProfileForUser(response.user!.id);
+
+      // Save FCM token after login
+      await NotificationService.saveTokenToSupabase();
+
       return response.user!;
     } on AuthException {
       rethrow;
@@ -130,7 +136,7 @@ class AuthService {
         'photo_url': null,
       });
     } catch (e) {
-      // Profile may already exist or insert may fail silently
+      // Ignore if profile already exists
     }
   }
 
@@ -140,10 +146,14 @@ class AuthService {
           .from('profiles')
           .select('id, name, email, phone, photo_url, created_at')
           .eq('id', userId);
+
       final list = rows as List;
+
       if (list.isNotEmpty) {
         updateProfile(
-          ProfileModel.fromJson(list.first as Map<String, dynamic>),
+          ProfileModel.fromJson(
+            list.first as Map<String, dynamic>,
+          ),
         );
       } else {
         updateProfile(null);
@@ -155,26 +165,33 @@ class AuthService {
 
   String _mapAuthError(String error) {
     final lower = error.toLowerCase();
+
     if (lower.contains('invalid login credentials') ||
         lower.contains('invalid email or password')) {
       return 'Invalid email or password.';
     }
+
     if (lower.contains('user already registered') ||
         lower.contains('already registered')) {
       return 'An account with this email already exists.';
     }
+
     if (lower.contains('email not confirmed')) {
       return 'Please confirm your email before signing in.';
     }
+
     if (lower.contains('password should be at least')) {
       return 'Password must be at least 6 characters.';
     }
+
     if (lower.contains('unable to validate email address')) {
       return 'Please enter a valid email address.';
     }
+
     if (lower.contains('rate limit')) {
       return 'Too many attempts. Please try again later.';
     }
+
     return 'An error occurred. Please try again.';
   }
 }

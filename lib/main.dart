@@ -17,11 +17,11 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Initialize Firebase Cloud Messaging
-  await NotificationService.initialize();
-
-  // Initialize Supabase
+  // Initialize Supabase FIRST
   await initializeSupabase();
+
+  // Initialize Notifications AFTER Supabase
+  await NotificationService.initialize();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
