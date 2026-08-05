@@ -1,4 +1,5 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -11,6 +12,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 class NotificationService {
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  static final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
+  static bool _localNotificationsInitialized = false;
 
   static Future<void> initialize() async {
     NotificationSettings settings = await _messaging.requestPermission(
@@ -64,6 +68,56 @@ class NotificationService {
     if (initialMessage != null) {
       print('Opened From Terminated');
       print(initialMessage.data);
+    }
+
+    await _initLocalNotifications();
+  }
+
+  static Future<void> _initLocalNotifications() async {
+    if (_localNotificationsInitialized) return;
+    _localNotificationsInitialized = true;
+
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const ios = DarwinInitializationSettings();
+    const settings = InitializationSettings(android: android, iOS: ios);
+
+    await _localNotifications.initialize(settings: settings);
+
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+  }
+
+  /// Shows a single local notification once all queued offline SOS alerts
+  /// have been successfully uploaded after internet was restored.
+  static Future<void> showOfflineSosSuccessNotification() async {
+    if (!_localNotificationsInitialized) {
+      await _initLocalNotifications();
+    }
+
+    const androidDetails = AndroidNotificationDetails(
+      'offline_sos_sync_channel',
+      'Offline SOS Sync',
+      channelDescription: 'Notifications for offline SOS synchronization',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const iosDetails = DarwinNotificationDetails();
+    const details =
+        NotificationDetails(android: androidDetails, iOS: iosDetails);
+
+    try {
+      await _localNotifications.show(
+        id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title: 'SOS Sent',
+        body:
+            'Your offline SOS has been sent successfully after internet was restored.',
+        notificationDetails: details,
+      );
+      print('[OfflineSync] Showing success notification');
+    } catch (e) {
+      print('[OfflineSync] Failed to show success notification: $e');
     }
   }
 

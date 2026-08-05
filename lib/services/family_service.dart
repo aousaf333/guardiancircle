@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:guardiancircle/models/family_model.dart';
 import 'package:guardiancircle/models/profile_model.dart';
+import 'package:guardiancircle/services/family_cache_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class FamilyService {
@@ -116,37 +117,49 @@ class FamilyService {
   Future<List<FamilyModel>> fetchFamilies() async {
     final userId = _supabase.auth.currentUser!.id;
 
-    final owned = await _supabase
-        .from('families')
-        .select()
-        .eq('created_by', userId)
-        .order('created_at', ascending: false);
+    try {
+      final owned = await _supabase
+          .from('families')
+          .select()
+          .eq('created_by', userId)
+          .order('created_at', ascending: false);
 
-    final joinedRows = await _supabase
-        .from('family_members')
-        .select('family_id')
-        .eq('user_id', userId);
+      final joinedRows = await _supabase
+          .from('family_members')
+          .select('family_id')
+          .eq('user_id', userId);
 
-    final joinedIds =
-        (joinedRows as List).map((r) => r['family_id'] as String).toSet();
+      final joinedIds =
+          (joinedRows as List).map((r) => r['family_id'] as String).toSet();
 
-    final joinedFamilies = joinedIds.isEmpty
-        ? <Map<String, dynamic>>[]
-        : await _supabase
-            .from('families')
-            .select()
-            .inFilter('id', joinedIds.toList())
-            .order('created_at', ascending: false);
+      final joinedFamilies = joinedIds.isEmpty
+          ? <Map<String, dynamic>>[]
+          : await _supabase
+              .from('families')
+              .select()
+              .inFilter('id', joinedIds.toList())
+              .order('created_at', ascending: false);
 
-    // Merge owned + joined, deduplicate by id.
-    final all = <String, FamilyModel>{};
-    for (final row in [...owned as List, ...joinedFamilies]) {
-      final model = FamilyModel.fromJson(row);
-      all[model.id] = model;
+      // Merge owned + joined, deduplicate by id.
+      final all = <String, FamilyModel>{};
+      for (final row in [...owned as List, ...joinedFamilies]) {
+        final model = FamilyModel.fromJson(row);
+        all[model.id] = model;
+      }
+
+      final families = all.values.toList();
+
+      // Mirror the successfully fetched data into the offline cache.
+      await FamilyCacheService.instance.saveFamilies(families);
+
+      print('[FamilyService] fetchFamilies: ${families.length} families');
+      return families;
+    } catch (e) {
+      // Supabase unreachable (offline): serve the cached family data instead.
+      print('[FamilyService] fetchFamilies: Supabase unavailable ($e); '
+          'falling back to cached data.');
+      return FamilyCacheService.instance.loadCachedFamilies();
     }
-
-    print('[FamilyService] fetchFamilies: ${all.length} families');
-    return all.values.toList();
   }
 
   // ---------------------------------------------------------------------------

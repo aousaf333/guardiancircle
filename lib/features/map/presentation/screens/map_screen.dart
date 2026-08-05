@@ -11,6 +11,11 @@ import 'package:guardiancircle/services/family_service.dart';
 import 'package:guardiancircle/services/location_tracking_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:guardiancircle/services/emergency_alert_service.dart';
+import 'package:guardiancircle/services/connectivity_service.dart';
+import 'package:guardiancircle/services/family_cache_service.dart';
+import 'package:guardiancircle/services/family_location_cache_service.dart';
+import 'package:guardiancircle/services/map_tile_cache_service.dart';
+import 'package:guardiancircle/services/offline_aware_tile_provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -25,6 +30,13 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   final LocationTrackingService _trackingService = LocationTrackingService();
+
+  late final ConnectivityService _connectivityService;
+  StreamSubscription<bool>? _connectivitySubscription;
+  late final StreamController<void> _tileResetController;
+  late final OfflineAwareTileProvider _tileProvider;
+  final MapTileCacheService _tileCache = MapTileCacheService.instance;
+  bool _isOffline = false;
 
   LatLng? _currentPosition;
   bool _isLoading = true;
@@ -66,14 +78,66 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    _tileResetController = StreamController<void>.broadcast();
+    _tileProvider = OfflineAwareTileProvider(
+      offline: _isOffline,
+      cache: _tileCache,
+    );
+    _connectivityService = ConnectivityService();
+    _connectivitySubscription =
+        _connectivityService.isOnline.listen(_onConnectivityChanged);
+    _connectivityService.initialize();
     _fetchFamilies();
   }
 
   @override
   void dispose() {
+    _connectivitySubscription?.cancel();
+    _connectivityService.dispose();
+    _tileResetController.close();
     _cancelRealtimeSubscription();
     _trackingService.dispose();
     super.dispose();
+  }
+
+  void _onConnectivityChanged(bool online) {
+    if (!mounted) return;
+    final offline = !online;
+    if (offline == _isOffline) return;
+
+    setState(() => _isOffline = offline);
+    _tileProvider.offline = offline;
+    _tileResetController.add(null);
+
+    if (offline) {
+      print('[OfflineMap] Showing cached map');
+      _loadCachedData();
+    } else {
+      print('[OfflineMap] Internet restored');
+      print('[OfflineMap] Switching to live tiles');
+      _loadFamilyMembers();
+    }
+  }
+
+  void _loadCachedData() {
+    if (_families.isEmpty) {
+      final cachedFamilies = FamilyCacheService.instance.loadCachedFamilies();
+      if (cachedFamilies.isNotEmpty && mounted) {
+        setState(() {
+          _families = cachedFamilies;
+          _selectedFamilyId ??= cachedFamilies.first.id;
+        });
+      }
+    }
+
+    final familyId = _selectedFamilyId;
+    if (familyId == null) return;
+
+    final cachedMembers = FamilyLocationCacheService.instance
+        .loadCachedFamilyMemberLocations(familyId);
+    if (mounted && cachedMembers.isNotEmpty) {
+      setState(() => _familyMembers = cachedMembers);
+    }
   }
 
   void _onMapReady() {
@@ -163,6 +227,22 @@ class _MapScreenState extends State<MapScreen> {
         _isLoading = false;
         _isTracking = true;
       });
+
+      if (_isOffline) {
+        final userId = SupabaseService.client.auth.currentUser?.id;
+        if (userId != null) {
+          final index = _familyMembers.indexWhere((m) => m.userId == userId);
+          if (index != -1) {
+            setState(() {
+              _familyMembers[index] = _familyMembers[index].copyWith(
+                latitude: latLng.latitude,
+                longitude: latLng.longitude,
+                lastUpdated: DateTime.now(),
+              );
+            });
+          }
+        }
+      }
 
       if (!_hasCenteredOnce && _mapReady) {
         _hasCenteredOnce = true;
@@ -259,6 +339,8 @@ class _MapScreenState extends State<MapScreen> {
           print('[Map] _fetchFamilies: auto-selected familyId=$_selectedFamilyId');
         }
       });
+
+      FamilyCacheService.instance.saveFamilies(families);
 
       if (_selectedFamilyId != null) {
         await _loadFamilyMembers();
@@ -437,6 +519,8 @@ class _MapScreenState extends State<MapScreen> {
       if (mounted && generation == _familyLoadGeneration) {
         setState(() => _familyMembers = members);
         print('[Map] setState: _familyMembers updated with ${members.length} markers');
+        FamilyLocationCacheService.instance
+            .saveFamilyMemberLocations(familyId, members);
         _subscribeToRealtime(familyId, userIds, currentUserId);
       } else {
         print('[Map] STALE gen=$generation (current=$_familyLoadGeneration) – state NOT updated');
@@ -681,6 +765,14 @@ class _MapScreenState extends State<MapScreen> {
             right: 16,
             child: _SosAlertOverlay(),
           ),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Center(
+              child: _buildConnectivityPill(cs),
+            ),
+          ),
         ],
       ),
     );
@@ -710,6 +802,8 @@ class _MapScreenState extends State<MapScreen> {
           userAgentPackageName: 'com.guardiancircle.app',
           maxZoom: 19,
           errorImage: null,
+          tileProvider: _tileProvider,
+          reset: _tileResetController.stream,
         ),
         MarkerLayer(markers: _buildAllMarkers()),
       ],
@@ -1287,6 +1381,35 @@ class _MapScreenState extends State<MapScreen> {
               color: cs.onSurface.withValues(alpha: 0.5),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectivityPill(ColorScheme cs) {
+    final online = !_isOffline;
+    final color = online ? const Color(0xFF10B981) : AppTheme.danger;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.35),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Text(
+        online ? '🟢 Online' : '🔴 Offline - Showing cached map',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.2,
         ),
       ),
     );

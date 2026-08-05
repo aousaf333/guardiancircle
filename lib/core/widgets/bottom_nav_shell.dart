@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:guardiancircle/services/emergency_alert_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/shared/widgets/connectivity_banner.dart';
 
 class BottomNavShell extends StatefulWidget {
   final StatefulNavigationShell navigationShell;
@@ -86,7 +87,12 @@ class _BottomNavShellState extends State<BottomNavShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: widget.navigationShell,
+      body: Stack(
+        children: [
+          widget.navigationShell,
+          const ConnectivityBanner(),
+        ],
+      ),
       bottomNavigationBar: _PremiumBottomNavBar(
         currentIndex: widget.navigationShell.currentIndex,
         onTap: (index) => widget.navigationShell.goBranch(

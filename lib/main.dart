@@ -7,6 +7,8 @@ import 'package:guardiancircle/core/theme/app_theme.dart';
 import 'package:guardiancircle/core/router/app_router.dart';
 import 'package:guardiancircle/app/app_initialization.dart';
 import 'package:guardiancircle/firebase_options.dart';
+import 'package:guardiancircle/services/emergency_alert_service.dart';
+import 'package:guardiancircle/services/local_storage_service.dart';
 import 'package:guardiancircle/services/notification_service.dart';
 
 Future<void> main() async {
@@ -22,6 +24,12 @@ Future<void> main() async {
 
   // Initialize Notifications AFTER Supabase
   await NotificationService.initialize();
+
+  // Initialize Hive local storage for offline support
+  await LocalStorageService.instance.initialize();
+
+  // Start automatic offline SOS synchronization
+  await EmergencyAlertService.startOfflineSync();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(

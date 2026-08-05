@@ -128,6 +128,18 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('SOS Alert sent to all family members')),
         );
+      } else if (!await _service.isOnline()) {
+        if (mounted) {
+          print('[SOS] Offline SOS queued, showing confirmation');
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'SOS saved offline. It will be sent automatically when internet is available.',
+              ),
+            ),
+          );
+        }
       }
     } catch (e) {
       print('[SOS] _activateSos: ERROR=$e');
