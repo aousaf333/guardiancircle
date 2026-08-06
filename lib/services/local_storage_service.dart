@@ -11,6 +11,9 @@ import 'package:hive_flutter/hive_flutter.dart';
 /// - `cached_locations` - cached location data
 /// - `offline_queue`    - queued operations performed while offline
 /// - `offline_location_queue` - queued GPS locations captured while offline
+/// - `cached_emergency_contacts` - cached emergency contacts for offline use
+/// - `emergency_contact_queue` - queued emergency contact changes for offline sync
+/// - `cached_privacy_settings` - locally persisted privacy/settings toggles
 ///
 /// Usage:
 /// ```dart
@@ -30,6 +33,9 @@ class LocalStorageService {
     'cached_locations',
     'offline_queue',
     'offline_location_queue',
+    'cached_emergency_contacts',
+    'emergency_contact_queue',
+    'cached_privacy_settings',
   ];
 
   final Map<String, Box> _boxes = {};

@@ -34,5 +34,15 @@ class EmergencyContactModel {
         'relationship': relationship,
       };
 
+  /// Full serialized representation used for local (offline) caching.
+  Map<String, dynamic> toCacheJson() => {
+        'id': id,
+        'user_id': userId,
+        'name': name,
+        'phone': phone,
+        'relationship': relationship,
+        'created_at': createdAt?.toUtc().toIso8601String(),
+      };
+
   String get initial => name.isNotEmpty ? name[0].toUpperCase() : '?';
 }

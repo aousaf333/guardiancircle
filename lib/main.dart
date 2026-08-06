@@ -9,9 +9,11 @@ import 'package:guardiancircle/app/app_initialization.dart';
 import 'package:guardiancircle/firebase_options.dart';
 import 'package:guardiancircle/services/background_location_service.dart';
 import 'package:guardiancircle/services/emergency_alert_service.dart';
+import 'package:guardiancircle/services/emergency_contact_service.dart';
 import 'package:guardiancircle/services/local_storage_service.dart';
 import 'package:guardiancircle/services/notification_service.dart';
 import 'package:guardiancircle/services/offline_location_sync_service.dart';
+import 'package:guardiancircle/services/privacy_settings_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +37,12 @@ Future<void> main() async {
 
   // Start automatic offline location synchronization
   await OfflineLocationSyncService.startOfflineSync();
+
+  // Start automatic emergency contact synchronization
+  await EmergencyContactService.startOfflineSync();
+
+  // Start automatic settings (privacy/notifications) synchronization
+  await PrivacySettingsService.startOfflineSync();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(

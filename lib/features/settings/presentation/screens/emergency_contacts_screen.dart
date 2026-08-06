@@ -78,10 +78,25 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen>
   }
 
   Future<void> _addContact() async {
+    if (_contacts.length >= EmergencyContactService.maxContacts) {
+      _showMaxLimitMessage();
+      return;
+    }
     final result = await _showContactDialog(context, null);
     if (result == true && mounted) {
       await _loadContacts();
     }
+  }
+
+  void _showMaxLimitMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Maximum of ${EmergencyContactService.maxContacts} emergency contacts allowed.',
+        ),
+        backgroundColor: AppTheme.warning,
+      ),
+    );
   }
 
   Future<void> _editContact(EmergencyContactModel contact) async {
@@ -247,6 +262,32 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen>
                         );
                         return;
                       }
+                      if (!EmergencyContactService.isValidPhoneNumber(phone)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Please enter a valid phone number'),
+                          ),
+                        );
+                        return;
+                      }
+                      final normalizedPhone =
+                          EmergencyContactService.normalizePhone(phone);
+                      final isDuplicate = _contacts.any(
+                        (c) =>
+                            c.id != existing?.id &&
+                            EmergencyContactService.normalizePhone(c.phone) ==
+                                normalizedPhone,
+                      );
+                      if (isDuplicate) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'This phone number is already in use',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
 
                       setDialogState(() => isSaving = true);
 
@@ -313,7 +354,9 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen>
 
     return Scaffold(
       floatingActionButton: ScaleOnTap(
-        onTap: _addContact,
+        onTap: _contacts.length >= EmergencyContactService.maxContacts
+            ? _showMaxLimitMessage
+            : _addContact,
         child: Container(
           width: 60,
           height: 60,
@@ -548,7 +591,8 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen>
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'These contacts will be notified when you trigger an SOS alert.',
+              'You can add up to ${EmergencyContactService.maxContacts} contacts. '
+              'They will be notified when you trigger an SOS alert.',
               style: TextStyle(
                 fontSize: 12,
                 color: cs.onSurface.withValues(alpha: 0.5),

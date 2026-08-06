@@ -7,6 +7,7 @@ import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/app/theme_state.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
 import 'package:guardiancircle/services/background_location_service.dart';
+import 'package:guardiancircle/services/notification_service.dart';
 import 'package:guardiancircle/services/privacy_settings_service.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
 import 'package:guardiancircle/shared/widgets/app_bar_icon_button.dart';
@@ -57,7 +58,30 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _loadPrivacySettings() async {
+    // Restore from the local cache first so the UI shows the last saved state
+    // immediately, even while offline.
     try {
+      final cached = await _privacyService.fetchSettingsLocal();
+      if (cached != null && mounted) {
+        setState(() {
+          _locationSharing = cached.locationSharing;
+          _privacyMode = cached.invisibleMode;
+          _notificationsEnabled = cached.notificationsEnabled;
+        });
+        await BackgroundLocationService.setLocationSharingEnabled(
+          cached.locationSharing,
+        );
+        await BackgroundLocationService.setPrivacyEnabled(cached.invisibleMode);
+        NotificationService.setNotificationsEnabled(cached.notificationsEnabled);
+      }
+    } catch (e) {
+      debugPrint('[Settings] Failed to load cached privacy settings: $e');
+    }
+
+    // Refresh from Supabase and apply the server state. Push any change made
+    // while offline first so newer local values win over the server snapshot.
+    try {
+      await _privacyService.syncPendingChanges();
       final settings = await _privacyService.fetchSettings();
       if (mounted) {
         setState(() {
@@ -69,6 +93,8 @@ class _SettingsScreenState extends State<SettingsScreen>
       await BackgroundLocationService.setLocationSharingEnabled(
         settings.locationSharing,
       );
+      await BackgroundLocationService.setPrivacyEnabled(settings.invisibleMode);
+      NotificationService.setNotificationsEnabled(settings.notificationsEnabled);
     } catch (e) {
       debugPrint('[Settings] Failed to load privacy settings: $e');
     }
@@ -82,9 +108,14 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
     try {
       debugPrint('[Settings] Saving privacy settings – invisible_mode=${settings.invisibleMode}');
+      // Persist locally first so toggles survive restarts. If the Supabase
+      // write below fails, the entry stays flagged and is pushed on next launch.
+      await _privacyService.saveSettingsLocal(settings, needsSync: true);
       await _privacyService.saveSettings(settings);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.removeCurrentSnackBar();
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Settings saved'),
             backgroundColor: AppTheme.success,
@@ -94,7 +125,9 @@ class _SettingsScreenState extends State<SettingsScreen>
     } catch (e) {
       debugPrint('[Settings] Failed to save privacy settings: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.removeCurrentSnackBar();
+        messenger.showSnackBar(
           SnackBar(
             content: Text('Failed to save: $e'),
             backgroundColor: AppTheme.danger,
@@ -472,11 +505,13 @@ class _SettingsScreenState extends State<SettingsScreen>
             value: _notificationsEnabled,
             onChanged: (v) {
               setState(() => _notificationsEnabled = v);
+              NotificationService.setNotificationsEnabled(v);
               _savePrivacySettings();
             },
           ),
           onTap: () {
             setState(() => _notificationsEnabled = !_notificationsEnabled);
+            NotificationService.setNotificationsEnabled(_notificationsEnabled);
             _savePrivacySettings();
           },
         ),
@@ -506,11 +541,13 @@ class _SettingsScreenState extends State<SettingsScreen>
             value: _privacyMode,
             onChanged: (v) {
               setState(() => _privacyMode = v);
+              BackgroundLocationService.setPrivacyEnabled(v);
               _savePrivacySettings();
             },
           ),
           onTap: () {
             setState(() => _privacyMode = !_privacyMode);
+            BackgroundLocationService.setPrivacyEnabled(_privacyMode);
             _savePrivacySettings();
           },
           isLast: true,

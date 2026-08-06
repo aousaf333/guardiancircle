@@ -84,6 +84,7 @@ class FamilyLocationCacheService {
       'longitude': m.longitude,
       'lastUpdated': m.lastUpdated.toIso8601String(),
       'battery': m.battery,
+      'isLocationHidden': m.isLocationHidden,
     };
   }
 
@@ -100,6 +101,7 @@ class FamilyLocationCacheService {
           DateTime.tryParse(json['lastUpdated'] as String? ?? '') ??
               DateTime.now(),
       battery: (json['battery'] as num?)?.toDouble(),
+      isLocationHidden: json['isLocationHidden'] as bool? ?? false,
     );
   }
 }

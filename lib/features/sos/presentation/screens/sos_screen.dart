@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/models/emergency_contact_model.dart';
 import 'package:guardiancircle/services/emergency_alert_service.dart';
+import 'package:guardiancircle/services/emergency_contact_service.dart';
 import 'package:guardiancircle/shared/widgets/section_header.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class SosScreen extends StatefulWidget {
   final String? existingAlertId;
@@ -14,11 +17,15 @@ class SosScreen extends StatefulWidget {
 
 class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
   final EmergencyAlertService _service = EmergencyAlertService.defaultClient();
+  final EmergencyContactService _contactService =
+      EmergencyContactService.defaultClient();
   bool _sosActive = false;
   bool _isLoading = false;
   String? _activeAlertId;
   Timer? _elapsedTimer;
   int _elapsedSeconds = 0;
+  List<EmergencyContactModel> _emergencyContacts = [];
+  bool _contactsLoading = true;
   late final AnimationController _fadeController;
   late final AnimationController _sosPulseController;
   late final Animation<double> _fadeAnim;
@@ -39,6 +46,8 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
       curve: Curves.easeOutCubic,
     );
     _fadeController.forward();
+
+    _loadEmergencyContacts();
 
     if (widget.existingAlertId != null) {
       _activeAlertId = widget.existingAlertId;
@@ -147,6 +156,60 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to send SOS: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadEmergencyContacts() async {
+    try {
+      final contacts = await _contactService.fetchContacts();
+      if (mounted) {
+        setState(() {
+          _emergencyContacts = contacts;
+          _contactsLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _contactsLoading = false);
+      }
+    }
+  }
+
+  Future<void> _launchCall(String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone);
+    try {
+      final launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the dialer')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the dialer')),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchSms(String phone) async {
+    final uri = Uri(scheme: 'sms', path: phone);
+    try {
+      final launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the SMS app')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the SMS app')),
         );
       }
     }
@@ -389,6 +452,8 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 28),
+                    _buildEmergencyContactsSection(cs, isDark),
                   ],
                   const SizedBox(height: 28),
                   if (!_sosActive) ...[
@@ -470,6 +535,163 @@ class _SosScreenState extends State<SosScreen> with TickerProviderStateMixin {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEmergencyContactsSection(ColorScheme cs, bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionHeader(title: 'Emergency Contacts'),
+        if (_contactsLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          )
+        else if (_emergencyContacts.isEmpty)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: cs.onSurface.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: cs.outline.withValues(alpha: 0.25),
+                width: 0.5,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.contacts_outlined,
+                  color: cs.onSurface.withValues(alpha: 0.4),
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'No emergency contacts yet. Add them in Settings.',
+                    style: TextStyle(
+                      color: cs.onSurface.withValues(alpha: 0.6),
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          ..._emergencyContacts.map(
+            (contact) => _buildSosContactCard(contact, cs, isDark),
+          ),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  Widget _buildSosContactCard(
+    EmergencyContactModel contact,
+    ColorScheme cs,
+    bool isDark,
+  ) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cs.onSurface.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.25),
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppTheme.danger.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Center(
+              child: Text(
+                contact.initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  contact.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                if (contact.relationship.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    contact.relationship,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.5),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: () => _launchCall(contact.phone),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppTheme.success.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.call_rounded,
+                color: AppTheme.success,
+                size: 20,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () => _launchSms(contact.phone),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.sms_outlined,
+                color: cs.primary,
+                size: 20,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -16,6 +16,18 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
   static bool _localNotificationsInitialized = false;
 
+  /// Whether non-critical app notifications are enabled. Restored from the
+  /// locally persisted settings on startup. SOS critical alerts are never
+  /// suppressed by this flag.
+  static bool notificationsEnabled = true;
+
+  /// Updates the notifications preference. Called by the Settings screen
+  /// whenever the user toggles notifications.
+  static void setNotificationsEnabled(bool enabled) {
+    notificationsEnabled = enabled;
+    print('[Notifications] ${enabled ? 'Enabled' : 'Disabled'}');
+  }
+
   static Future<void> initialize() async {
     NotificationSettings settings = await _messaging.requestPermission(
       alert: true,
@@ -53,6 +65,7 @@ class NotificationService {
     });
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      if (!notificationsEnabled) return;
       print('Foreground Notification');
       print('Title: ${message.notification?.title}');
       print('Body: ${message.notification?.body}');
@@ -92,6 +105,7 @@ class NotificationService {
   /// Shows a single local notification once all queued offline SOS alerts
   /// have been successfully uploaded after internet was restored.
   static Future<void> showOfflineSosSuccessNotification() async {
+    if (!notificationsEnabled) return;
     if (!_localNotificationsInitialized) {
       await _initLocalNotifications();
     }

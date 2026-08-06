@@ -11,6 +11,10 @@ class FamilyMemberLocation {
   final DateTime lastUpdated;
   final double? battery;
 
+  /// When true the member has privacy mode enabled and no coordinates should
+  /// be shown. The UI displays "Location Hidden" instead of a marker.
+  final bool isLocationHidden;
+
   const FamilyMemberLocation({
     required this.userId,
     required this.name,
@@ -21,6 +25,7 @@ class FamilyMemberLocation {
     required this.longitude,
     required this.lastUpdated,
     this.battery,
+    this.isLocationHidden = false,
   });
 
   FamilyMemberLocation copyWith({
@@ -33,6 +38,7 @@ class FamilyMemberLocation {
     double? longitude,
     DateTime? lastUpdated,
     double? battery,
+    bool? isLocationHidden,
   }) {
     return FamilyMemberLocation(
       userId: userId ?? this.userId,
@@ -44,6 +50,7 @@ class FamilyMemberLocation {
       longitude: longitude ?? this.longitude,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       battery: battery ?? this.battery,
+      isLocationHidden: isLocationHidden ?? this.isLocationHidden,
     );
   }
 }

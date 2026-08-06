@@ -13,6 +13,16 @@ class LocationTrackingService {
   /// service so that at most one position stream is active at a time.
   static final LocationTrackingService instance = LocationTrackingService._();
 
+  /// When false (privacy mode), live positions are still tracked locally so
+  /// SOS and the map keep working, but nothing is uploaded to or queued for
+  /// Supabase. Toggled by [BackgroundLocationService].
+  static bool uploadLocationsToServer = true;
+
+  /// Whether location sharing is currently enabled. When false no live
+  /// positions are uploaded or queued, even while the map keeps its own GPS
+  /// stream open. Toggled by [BackgroundLocationService].
+  static bool locationSharingEnabled = true;
+
   StreamSubscription<Position>? _positionSubscription;
   void Function(Position position)? _onPositionUpdate;
   DateTime? _lastSupabaseUpdate;
@@ -101,6 +111,11 @@ class LocationTrackingService {
     void Function(Position position)? onPositionUpdate,
   ) {
     print('[BackgroundTracking] Location received');
+    if (!locationSharingEnabled || !uploadLocationsToServer) {
+      onPositionUpdate?.call(position);
+      return;
+    }
+
     final now = DateTime.now();
     final distance = _calculateDistance(
       _lastSupabaseLat,

@@ -241,7 +241,7 @@ class _MapScreenState extends State<MapScreen> {
         _isTracking = true;
       });
 
-      if (_isOffline) {
+      if (_isOffline || BackgroundLocationService.privacyEnabled) {
         final userId = SupabaseService.client.auth.currentUser?.id;
         if (userId != null) {
           final index = _familyMembers.indexWhere((m) => m.userId == userId);
@@ -251,7 +251,20 @@ class _MapScreenState extends State<MapScreen> {
                 latitude: latLng.latitude,
                 longitude: latLng.longitude,
                 lastUpdated: DateTime.now(),
+                isLocationHidden: false,
               );
+            });
+          } else {
+            setState(() {
+              _familyMembers.add(FamilyMemberLocation(
+                userId: userId,
+                name: '',
+                role: 'Owner',
+                color: const Color(0xFF10B981),
+                latitude: latLng.latitude,
+                longitude: latLng.longitude,
+                lastUpdated: DateTime.now(),
+              ));
             });
           }
         }
@@ -451,7 +464,26 @@ class _MapScreenState extends State<MapScreen> {
       }
       print('[Map]   profileMap has ${profileMap.length} entries');
 
-      // --- Step 4: merge ---
+      // --- Step 4: privacy settings ---
+      final privacyHidden = <String, bool>{};
+      try {
+        final privacyRows = await supabase
+            .from('privacy_settings')
+            .select('user_id, invisible_mode')
+            .inFilter('user_id', userIds);
+        final pList = List<Map<String, dynamic>>.from(privacyRows as List);
+        print('[Map] Step4 privacy_settings: ${pList.length} rows');
+        for (final row in pList) {
+          final hidden = row['invisible_mode'] as bool? ?? false;
+          privacyHidden[row['user_id'] as String] = hidden;
+          print('[Map]   privacy: user_id=${row["user_id"]}, '
+              'invisible_mode=$hidden');
+        }
+      } catch (e) {
+        print('[Map] Step4 privacy_settings FAILED: $e');
+      }
+
+      // --- Step 5: merge ---
       final family = _families.cast<FamilyModel?>().firstWhere(
             (f) => f?.id == familyId,
             orElse: () => null,
@@ -460,11 +492,62 @@ class _MapScreenState extends State<MapScreen> {
 
       final members = <FamilyMemberLocation>[];
       final skipped = <String>[];
+      final hidden = <String>[];
 
       for (var i = 0; i < memberList.length; i++) {
         final m = memberList[i];
         final uid = m['user_id'] as String;
+        final isCurrentUser = uid == currentUserId;
+        final isHidden = privacyHidden[uid] == true;
         final loc = locationMap[uid];
+
+        final profile = profileMap[uid];
+        final name = profile?['name'] as String? ?? 'Unknown';
+        final photoUrl = profile?['photo_url'] as String?;
+        final isOwner = m['role'] == 'owner' || uid == createdBy;
+        final role = isOwner ? 'Owner' : (m['role'] as String? ?? 'Member');
+        final color = isCurrentUser
+            ? const Color(0xFF10B981)
+            : _markerColors[i % _markerColors.length];
+
+        // The current user still sees their own live position on their device
+        // even while privacy mode is active.
+        if (isCurrentUser && isHidden) {
+          if (_currentPosition != null) {
+            members.add(FamilyMemberLocation(
+              userId: uid,
+              name: name,
+              role: role,
+              photoUrl: photoUrl,
+              color: color,
+              latitude: _currentPosition!.latitude,
+              longitude: _currentPosition!.longitude,
+              lastUpdated: DateTime.now(),
+            ));
+            print('[Map]   SELF $uid: privacy mode, shown from live position');
+          } else {
+            skipped.add('self $uid: privacy mode, no live position yet');
+            print('[Map]   SKIP self $uid: privacy mode, no live position');
+          }
+          continue;
+        }
+
+        if (isHidden) {
+          hidden.add(uid);
+          members.add(FamilyMemberLocation(
+            userId: uid,
+            name: name,
+            role: role,
+            photoUrl: photoUrl,
+            color: color,
+            latitude: 0,
+            longitude: 0,
+            lastUpdated: DateTime.now(),
+            isLocationHidden: true,
+          ));
+          print('[Map]   HIDDEN $uid: privacy mode, location hidden');
+          continue;
+        }
 
         if (loc == null) {
           final reason = 'no location in locationMap for $uid';
@@ -482,20 +565,12 @@ class _MapScreenState extends State<MapScreen> {
           continue;
         }
 
-        final profile = profileMap[uid];
-        final name = profile?['name'] as String? ?? 'Unknown';
-        final photoUrl = profile?['photo_url'] as String?;
-        final isOwner = m['role'] == 'owner' || uid == createdBy;
-        final role = isOwner ? 'Owner' : (m['role'] as String? ?? 'Member');
-
         final memberLoc = FamilyMemberLocation(
           userId: uid,
           name: name,
           role: role,
           photoUrl: photoUrl,
-          color: uid == currentUserId
-              ? const Color(0xFF10B981)
-              : _markerColors[i % _markerColors.length],
+          color: color,
           latitude: (locLat as num).toDouble(),
           longitude: (locLng as num).toDouble(),
           lastUpdated: loc['updated_at'] != null
@@ -512,7 +587,8 @@ class _MapScreenState extends State<MapScreen> {
 
       print('[Map] ---- SUMMARY gen=$generation ----');
       print('[Map]   totalMembers=${memberList.length}');
-      print('[Map]   membersWithLocation=${members.length}');
+      print('[Map]   membersWithLocation=${members.length - hidden.length}');
+      print('[Map]   locationHidden=${hidden.length}: $hidden');
       print('[Map]   skipped=${skipped.length}: $skipped');
       print('[Map]   MARKERS CREATED=${members.length}');
 
@@ -827,6 +903,8 @@ class _MapScreenState extends State<MapScreen> {
     final markers = <Marker>[];
 
     for (final member in _familyMembers) {
+      if (member.isLocationHidden) continue;
+
       final isCurrentUser = member.userId ==
           SupabaseService.client.auth.currentUser?.id;
       markers.add(
@@ -1299,7 +1377,24 @@ class _MapScreenState extends State<MapScreen> {
                         Text(
                           _currentPosition != null
                               ? _familyMembers.isNotEmpty
-                                  ? '${_familyMembers.length} ${_familyMembers.length == 1 ? 'member' : 'members'} on map'
+                                  ? () {
+                                      final hiddenCount = _familyMembers
+                                          .where((m) => m.isLocationHidden)
+                                          .length;
+                                      final visibleCount =
+                                          _familyMembers.length - hiddenCount;
+                                      final String base;
+                                      if (visibleCount == 0) {
+                                        base = 'No members on map';
+                                      } else if (visibleCount == 1) {
+                                        base = '1 member on map';
+                                      } else {
+                                        base = '$visibleCount members on map';
+                                      }
+                                      return hiddenCount > 0
+                                          ? '$base · $hiddenCount hiding location'
+                                          : base;
+                                    }()
                                   : 'Locating family...'
                               : _isLoading
                                   ? 'Getting location...'
