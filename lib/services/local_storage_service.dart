@@ -10,6 +10,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 /// - `cached_family`    - cached family member data
 /// - `cached_locations` - cached location data
 /// - `offline_queue`    - queued operations performed while offline
+/// - `offline_location_queue` - queued GPS locations captured while offline
 ///
 /// Usage:
 /// ```dart
@@ -28,6 +29,7 @@ class LocalStorageService {
     'cached_family',
     'cached_locations',
     'offline_queue',
+    'offline_location_queue',
   ];
 
   final Map<String, Box> _boxes = {};

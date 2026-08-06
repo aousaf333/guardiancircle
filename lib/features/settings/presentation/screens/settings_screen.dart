@@ -6,6 +6,7 @@ import 'package:guardiancircle/app/auth_service.dart';
 import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/app/theme_state.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/services/background_location_service.dart';
 import 'package:guardiancircle/services/privacy_settings_service.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
 import 'package:guardiancircle/shared/widgets/app_bar_icon_button.dart';
@@ -65,6 +66,9 @@ class _SettingsScreenState extends State<SettingsScreen>
           _notificationsEnabled = settings.notificationsEnabled;
         });
       }
+      await BackgroundLocationService.setLocationSharingEnabled(
+        settings.locationSharing,
+      );
     } catch (e) {
       debugPrint('[Settings] Failed to load privacy settings: $e');
     }
@@ -529,10 +533,16 @@ class _SettingsScreenState extends State<SettingsScreen>
             onChanged: (v) {
               setState(() => _locationSharing = v);
               _savePrivacySettings();
+              BackgroundLocationService.setLocationSharingEnabled(v);
             },
           ),
           onTap: () {
-            setState(() => _locationSharing = !_locationSharing);
+            setState(() {
+              _locationSharing = !_locationSharing;
+              BackgroundLocationService.setLocationSharingEnabled(
+                _locationSharing,
+              );
+            });
             _savePrivacySettings();
           },
         ),
@@ -663,6 +673,7 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   Future<void> _handleLogout(BuildContext context) async {
     try {
+      await BackgroundLocationService.stop();
       await _authService.signOut();
       updateProfile(null);
       themeNotifier.value = ThemeMode.dark;

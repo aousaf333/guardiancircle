@@ -7,8 +7,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
 import 'package:guardiancircle/models/family_model.dart';
 import 'package:guardiancircle/models/family_member_location.dart';
+import 'package:guardiancircle/services/background_location_service.dart';
 import 'package:guardiancircle/services/family_service.dart';
 import 'package:guardiancircle/services/location_tracking_service.dart';
+import 'package:guardiancircle/services/offline_location_sync_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:guardiancircle/services/emergency_alert_service.dart';
 import 'package:guardiancircle/services/connectivity_service.dart';
@@ -29,7 +31,8 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
-  final LocationTrackingService _trackingService = LocationTrackingService();
+  final LocationTrackingService _trackingService =
+      LocationTrackingService.instance;
 
   late final ConnectivityService _connectivityService;
   StreamSubscription<bool>? _connectivitySubscription;
@@ -87,6 +90,8 @@ class _MapScreenState extends State<MapScreen> {
     _connectivitySubscription =
         _connectivityService.isOnline.listen(_onConnectivityChanged);
     _connectivityService.initialize();
+    OfflineLocationSyncService.statusNotifier
+        .addListener(_onLocationSyncStatusChanged);
     _fetchFamilies();
   }
 
@@ -94,9 +99,12 @@ class _MapScreenState extends State<MapScreen> {
   void dispose() {
     _connectivitySubscription?.cancel();
     _connectivityService.dispose();
+    OfflineLocationSyncService.statusNotifier
+        .removeListener(_onLocationSyncStatusChanged);
     _tileResetController.close();
     _cancelRealtimeSubscription();
-    _trackingService.dispose();
+    _trackingService.stopTracking();
+    BackgroundLocationService.resumeTracking();
     super.dispose();
   }
 
@@ -117,6 +125,11 @@ class _MapScreenState extends State<MapScreen> {
       print('[OfflineMap] Switching to live tiles');
       _loadFamilyMembers();
     }
+  }
+
+  void _onLocationSyncStatusChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _loadCachedData() {
@@ -1387,8 +1400,21 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _buildConnectivityPill(ColorScheme cs) {
+    final synced = OfflineLocationSyncService.statusNotifier.value ==
+        OfflineLocationSyncStatus.synced;
     final online = !_isOffline;
-    final color = online ? const Color(0xFF10B981) : AppTheme.danger;
+    final color = synced || online ? const Color(0xFF10B981) : AppTheme.danger;
+
+    final String text;
+    if (synced) {
+      text = 'Location Synced\n'
+          'All offline location updates have been synchronized successfully.';
+    } else if (online) {
+      text = '🟢 Online';
+    } else {
+      text = 'Offline\n'
+          'Location updates will sync automatically when internet is restored.';
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
@@ -1404,7 +1430,8 @@ class _MapScreenState extends State<MapScreen> {
         ],
       ),
       child: Text(
-        online ? '🟢 Online' : '🔴 Offline - Showing cached map',
+        text,
+        textAlign: TextAlign.center,
         style: const TextStyle(
           color: Colors.white,
           fontSize: 12,

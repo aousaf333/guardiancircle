@@ -7,9 +7,11 @@ import 'package:guardiancircle/core/theme/app_theme.dart';
 import 'package:guardiancircle/core/router/app_router.dart';
 import 'package:guardiancircle/app/app_initialization.dart';
 import 'package:guardiancircle/firebase_options.dart';
+import 'package:guardiancircle/services/background_location_service.dart';
 import 'package:guardiancircle/services/emergency_alert_service.dart';
 import 'package:guardiancircle/services/local_storage_service.dart';
 import 'package:guardiancircle/services/notification_service.dart';
+import 'package:guardiancircle/services/offline_location_sync_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,6 +33,9 @@ Future<void> main() async {
   // Start automatic offline SOS synchronization
   await EmergencyAlertService.startOfflineSync();
 
+  // Start automatic offline location synchronization
+  await OfflineLocationSyncService.startOfflineSync();
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -44,8 +49,32 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      BackgroundLocationService.resumeTracking();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

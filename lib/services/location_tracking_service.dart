@@ -1,10 +1,20 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui' show Color;
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:guardiancircle/services/offline_location_sync_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 
 class LocationTrackingService {
+  LocationTrackingService._();
+
+  /// Single shared instance used by the map and the background tracking
+  /// service so that at most one position stream is active at a time.
+  static final LocationTrackingService instance = LocationTrackingService._();
+
   StreamSubscription<Position>? _positionSubscription;
+  void Function(Position position)? _onPositionUpdate;
   DateTime? _lastSupabaseUpdate;
   double _lastSupabaseLat = 0;
   double _lastSupabaseLng = 0;
@@ -20,6 +30,28 @@ class LocationTrackingService {
   bool get isTracking => _positionSubscription != null;
 
   Stream<Position> get positionStream {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return Geolocator.getPositionStream(
+        locationSettings: AndroidSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 5,
+          timeLimit: null,
+          foregroundNotificationConfig: const ForegroundNotificationConfig(
+            notificationTitle: 'GuardianCircle',
+            notificationText: 'Live location sharing is active',
+            notificationChannelName: 'Location Sharing',
+            enableWakeLock: true,
+            setOngoing: true,
+            notificationIcon: AndroidResource(
+              name: 'ic_launcher',
+              defType: 'mipmap',
+            ),
+            color: Color(0xFF2563EB),
+          ),
+        ),
+      );
+    }
+
     return Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.medium,
@@ -42,12 +74,23 @@ class LocationTrackingService {
         permission == LocationPermission.whileInUse;
   }
 
-  void startTracking(void Function(Position position) onPositionUpdate) {
-    stopTracking();
+  Future<bool> isLocationServiceEnabled() => Geolocator.isLocationServiceEnabled();
+
+  Future<bool> hasPermission() async {
+    final permission = await Geolocator.checkPermission();
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+  }
+
+  void startTracking([void Function(Position position)? onPositionUpdate]) {
+    if (onPositionUpdate != null) {
+      _onPositionUpdate = onPositionUpdate;
+    }
+    if (_positionSubscription != null) return;
 
     _positionSubscription = positionStream.listen(
       (Position position) {
-        _handlePositionUpdate(position, onPositionUpdate);
+        _handlePositionUpdate(position, _onPositionUpdate);
       },
       onError: (e) {},
     );
@@ -55,8 +98,9 @@ class LocationTrackingService {
 
   void _handlePositionUpdate(
     Position position,
-    void Function(Position position) onPositionUpdate,
+    void Function(Position position)? onPositionUpdate,
   ) {
+    print('[BackgroundTracking] Location received');
     final now = DateTime.now();
     final distance = _calculateDistance(
       _lastSupabaseLat,
@@ -76,10 +120,15 @@ class LocationTrackingService {
       _lastSupabaseLat = position.latitude;
       _lastSupabaseLng = position.longitude;
       _lastSupabaseUpdate = now;
-      _upsertLocation(position);
+      if (OfflineLocationSyncService.isCurrentlyOffline) {
+        OfflineLocationSyncService.enqueueLocation(position);
+        print('[BackgroundTracking] Location queued');
+      } else {
+        _upsertLocation(position);
+      }
     }
 
-    onPositionUpdate(position);
+    onPositionUpdate?.call(position);
   }
 
   Future<void> _upsertLocation(Position position) async {
@@ -100,6 +149,7 @@ class LocationTrackingService {
         onConflict: 'user_id',
       );
 
+      print('[BackgroundTracking] Location uploaded');
       await _saveLocationHistory(userId, position);
     } catch (_) {}
   }
@@ -156,6 +206,7 @@ class LocationTrackingService {
   void stopTracking() {
     _positionSubscription?.cancel();
     _positionSubscription = null;
+    _onPositionUpdate = null;
     _lastSupabaseUpdate = null;
     _lastSupabaseLat = 0;
     _lastSupabaseLng = 0;

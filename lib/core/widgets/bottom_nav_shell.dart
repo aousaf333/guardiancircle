@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:guardiancircle/services/background_location_service.dart';
 import 'package:guardiancircle/services/emergency_alert_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
@@ -27,6 +28,7 @@ class _BottomNavShellState extends State<BottomNavShell> {
     _alertService = EmergencyAlertService.defaultClient();
     _initAlertSubscription();
     EmergencyAlertService.activeAlertsNotifier.addListener(_onAlertsChanged);
+    BackgroundLocationService.initialize();
   }
 
   @override
