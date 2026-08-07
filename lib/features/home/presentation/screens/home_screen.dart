@@ -4,6 +4,11 @@ import 'package:go_router/go_router.dart';
 import 'package:guardiancircle/app/auth_service.dart';
 import 'package:guardiancircle/app/profile_state.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/models/self_location_info.dart';
+import 'package:guardiancircle/services/activity_service.dart';
+import 'package:guardiancircle/services/family_service.dart';
+import 'package:guardiancircle/services/location_tracking_service.dart';
+import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:guardiancircle/shared/widgets/glass_card.dart';
 import 'package:guardiancircle/shared/widgets/section_header.dart';
 import 'package:guardiancircle/shared/widgets/quick_action_tile.dart';
@@ -19,11 +24,19 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  static const Duration _onlineThreshold = Duration(minutes: 5);
   late final AuthService _authService;
   late final AnimationController _fadeController;
   late final AnimationController _slideController;
   late final Animation<double> _fadeAnim;
   late final StaggeredSlideIns _slideIns;
+
+  List<FamilyActivityEvent> _recentActivity = [];
+  bool _activityLoading = true;
+  SelfLocationInfo? _selfLocation;
+  bool _locationLoading = true;
+  List<_FamilyMember> _familyMembers = [];
+  bool _familyLoading = true;
 
   @override
   void initState() {
@@ -44,6 +57,118 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _slideIns = StaggeredSlideIns(controller: _slideController, count: 8);
     _fadeController.forward();
     _slideController.forward();
+    _loadRecentActivity();
+    _loadSelfLocation();
+    _loadFamilyCircle();
+  }
+
+  Future<void> _loadFamilyCircle() async {
+    try {
+      final service = FamilyService.defaultClient();
+      final families = await service.fetchFamilies();
+      if (families.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _familyMembers = [];
+          _familyLoading = false;
+        });
+        return;
+      }
+
+      final family = families.first;
+      final createdBy = family.createdBy;
+      final rows = await service.fetchFamilyMembers(family.id);
+      final userIds = rows.map((r) => r['user_id'] as String).toList();
+      final onlineIds = await _fetchOnlineUserIds(userIds);
+
+      const avatarColors = [
+        Color(0xFFEC4899),
+        Color(0xFF3B82F6),
+        Color(0xFF8B5CF6),
+        Color(0xFFF59E0B),
+        Color(0xFF10B981),
+        Color(0xFFEF4444),
+        Color(0xFF06B6D4),
+        Color(0xFF8B5CF6),
+      ];
+
+      final members = rows.map((row) {
+        final profile = service.parseProfile(row);
+        final name = profile?.displayName ?? 'Unknown';
+        final uid = row['user_id'] as String;
+        final isOwner = row['role'] == 'owner' || uid == createdBy;
+        return _FamilyMember(
+          name: name,
+          role: isOwner ? 'Owner' : (row['role'] as String? ?? 'Member'),
+          color: avatarColors[name.hashCode.abs() % avatarColors.length],
+          photoUrl: profile?.photoUrl,
+          isOwner: isOwner,
+          isOnline: onlineIds.contains(uid),
+          userId: uid,
+        );
+      }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _familyMembers = members;
+        _familyLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _familyMembers = [];
+        _familyLoading = false;
+      });
+    }
+  }
+
+  Future<Set<String>> _fetchOnlineUserIds(List<String> userIds) async {
+    if (userIds.isEmpty) return const {};
+    try {
+      final rows = await SupabaseService.client
+          .from('user_locations')
+          .select('user_id, updated_at')
+          .inFilter('user_id', userIds);
+      final now = DateTime.now();
+      final online = <String>{};
+      for (final row in (rows as List)) {
+        final updated = row['updated_at'];
+        if (updated == null) continue;
+        final lastUpdate = DateTime.tryParse(updated as String)?.toLocal();
+        if (lastUpdate == null) continue;
+        if (now.difference(lastUpdate) <= _onlineThreshold) {
+          online.add(row['user_id'] as String);
+        }
+      }
+      return online;
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<void> _loadSelfLocation() async {
+    final info = await LocationTrackingService.instance.loadSelfLocationInfo();
+    if (!mounted) return;
+    setState(() {
+      _selfLocation = info;
+      _locationLoading = false;
+    });
+  }
+
+  Future<void> _loadRecentActivity() async {
+    try {
+      final events =
+          await ActivityService.defaultClient().fetchActivityEvents();
+      if (!mounted) return;
+      setState(() {
+        _recentActivity = events;
+        _activityLoading = false;
+      });
+    } catch (e) {
+      print('[Activity] Failed to load recent activity: $e');
+      if (!mounted) return;
+      setState(() => _activityLoading = false);
+    }
   }
 
   @override
@@ -283,6 +408,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildWelcomeCard(ThemeData theme, ColorScheme cs) {
+    final String circleSubtitle;
+    final String circleBadgeText;
+    final Color circleDotColor;
+    final List<BoxShadow>? circleDotShadow;
+    if (_familyLoading) {
+      circleSubtitle = 'Loading your circle…';
+      circleBadgeText = '…';
+      circleDotColor = cs.onSurface.withValues(alpha: 0.3);
+      circleDotShadow = null;
+    } else if (_familyMembers.isEmpty) {
+      circleSubtitle = 'No family members yet.';
+      circleBadgeText = 'No members';
+      circleDotColor = cs.onSurface.withValues(alpha: 0.3);
+      circleDotShadow = null;
+    } else {
+      final online = _familyMembers.where((m) => m.isOnline).length;
+      circleSubtitle = '$online of ${_familyMembers.length} members online';
+      circleBadgeText = online > 0 ? 'Active' : 'Idle';
+      circleDotColor =
+          online > 0 ? AppTheme.success : cs.onSurface.withValues(alpha: 0.3);
+      circleDotShadow = online > 0
+          ? const [BoxShadow(color: Color(0x8010B981), blurRadius: 4)]
+          : null;
+    }
+
     return GlassCard(
       padding: const EdgeInsets.all(20),
       child: Row(
@@ -314,7 +464,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'All 4 members are online and nearby',
+                  circleSubtitle,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: cs.onSurface.withValues(alpha: 0.45),
                   ),
@@ -325,7 +475,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: AppTheme.success.withValues(alpha: 0.1),
+              color: circleDotColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
@@ -334,19 +484,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 Container(
                   width: 7,
                   height: 7,
-                  decoration: const BoxDecoration(
-                    color: AppTheme.success,
+                  decoration: BoxDecoration(
+                    color: circleDotColor,
                     shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(color: Color(0x8010B981), blurRadius: 4),
-                    ],
+                    boxShadow: circleDotShadow,
                   ),
                 ),
                 const SizedBox(width: 5),
-                const Text(
-                  'Active',
+                Text(
+                  circleBadgeText,
                   style: TextStyle(
-                    color: AppTheme.success,
+                    color: circleDotColor,
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
                   ),
@@ -361,6 +509,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildLocationCard(ThemeData theme, ColorScheme cs) {
     final isDark = theme.brightness == Brightness.dark;
+    final selfLocation = _selfLocation;
+    final String pillText;
+    final String addressText;
+    final String updatedText;
+    if (_locationLoading) {
+      pillText = 'Loading…';
+      addressText = 'Fetching your location…';
+      updatedText = 'Updating…';
+    } else if (selfLocation == null) {
+      pillText = 'Location unavailable';
+      addressText = 'Location unavailable';
+      updatedText = 'Unavailable';
+    } else {
+      pillText = selfLocation.area;
+      addressText = selfLocation.address;
+      updatedText =
+          'Updated ${formatActivityTime(selfLocation.position.timestamp)}';
+    }
     return GestureDetector(
       onTap: () => context.push('/location-details'),
       child: GlassCard(
@@ -466,7 +632,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             Icon(Icons.location_on, size: 14, color: cs.primary),
                             const SizedBox(width: 4),
                             Text(
-                              'Downtown, NYC',
+                              pillText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelSmall?.copyWith(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 11,
@@ -498,7 +666,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                       ),
                       Text(
-                        '123 Main St, New York, NY',
+                        addressText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: cs.onSurface.withValues(alpha: 0.45),
                         ),
@@ -516,7 +686,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-                    'Updated 2m ago',
+                    updatedText,
                     style: TextStyle(
                       color: cs.primary,
                       fontWeight: FontWeight.w600,
@@ -534,12 +704,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildFamilyCard(ThemeData theme, ColorScheme cs) {
-    final members = [
-      _FamilyMember('Sarah', 'Mom', const Color(0xFFEC4899), true),
-      _FamilyMember('James', 'Dad', const Color(0xFF3B82F6), true),
-      _FamilyMember('Emma', 'Sister', const Color(0xFF8B5CF6), false),
-      _FamilyMember('You', 'Me', cs.primary, true),
-    ];
+    final onlineCount = _familyMembers.where((m) => m.isOnline).length;
 
     return GestureDetector(
       onTap: () => context.go('/family'),
@@ -556,115 +721,251 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppTheme.success.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '${members.where((m) => m.isOnline).length}/${members.length} online',
-                  style: const TextStyle(
-                    color: AppTheme.success,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
+              if (_familyLoading)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: cs.onSurface.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'Loading…',
+                    style: TextStyle(
+                      color: cs.onSurface.withValues(alpha: 0.5),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.success.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '$onlineCount/${_familyMembers.length} online',
+                    style: const TextStyle(
+                      color: AppTheme.success,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: members
-                .map(
-                  (member) => Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Stack(
-                        children: [
-                          Container(
-                            width: 56,
-                            height: 56,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  member.color,
-                                  member.color.withValues(alpha: 0.65),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: member.color.withValues(alpha: 0.3),
-                                  blurRadius: 14,
-                                  offset: const Offset(0, 5),
-                                ),
-                              ],
-                            ),
-                            child: Center(
-                              child: Text(
-                                member.name.characters.first,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 20,
-                                ),
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            right: 0,
-                            bottom: 0,
-                            child: Container(
-                              width: 16,
-                              height: 16,
-                              decoration: BoxDecoration(
-                                color: member.isOnline
-                                    ? AppTheme.success
-                                    : cs.onSurface.withValues(alpha: 0.2),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: const Color(0xFF0A0F1E),
-                                  width: 3,
-                                ),
-                                boxShadow: member.isOnline
-                                    ? const [
-                                        BoxShadow(
-                                          color: Color(0x8010B981),
-                                          blurRadius: 6,
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        member.name,
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        member.role,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: cs.onSurface.withValues(alpha: 0.35),
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-                .toList(),
-          ),
+          _buildFamilyMembers(theme, cs),
         ],
       ),
       ),
+    );
+  }
+
+  Widget _buildFamilyMembers(ThemeData theme, ColorScheme cs) {
+    if (_familyLoading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: cs.primary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_familyMembers.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            'No family members yet.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: cs.onSurface.withValues(alpha: 0.5),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    final visible = _familyMembers.take(4).toList();
+    final hiddenCount = _familyMembers.length - visible.length;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        for (final member in visible) _buildFamilyMemberTile(theme, cs, member),
+        if (hiddenCount > 0) _buildMoreTile(theme, cs, hiddenCount),
+      ],
+    );
+  }
+
+  Widget _buildFamilyMemberTile(
+    ThemeData theme,
+    ColorScheme cs,
+    _FamilyMember member,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    member.color,
+                    member.color.withValues(alpha: 0.65),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: member.color.withValues(alpha: 0.3),
+                    blurRadius: 14,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: (member.photoUrl != null &&
+                        member.photoUrl!.isNotEmpty)
+                    ? Image.network(
+                        member.photoUrl!,
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) =>
+                            _buildMemberInitial(member),
+                      )
+                    : _buildMemberInitial(member),
+              ),
+            ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: member.isOnline
+                      ? AppTheme.success
+                      : cs.onSurface.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF0A0F1E),
+                    width: 3,
+                  ),
+                  boxShadow: member.isOnline
+                      ? const [
+                          BoxShadow(
+                            color: Color(0x8010B981),
+                            blurRadius: 6,
+                          ),
+                        ]
+                      : null,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          member.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          member.role,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: cs.onSurface.withValues(alpha: 0.35),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMemberInitial(_FamilyMember member) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            member.color,
+            member.color.withValues(alpha: 0.65),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: Text(
+          member.name.characters.first.toUpperCase(),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+            fontSize: 20,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMoreTile(ThemeData theme, ColorScheme cs, int count) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: cs.surface.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: cs.outline.withValues(alpha: 0.4),
+              width: 1,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              '+$count',
+              style: TextStyle(
+                color: cs.onSurface.withValues(alpha: 0.6),
+                fontWeight: FontWeight.w700,
+                fontSize: 18,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'More',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     );
   }
 
@@ -726,42 +1027,116 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildRecentActivity(ThemeData theme) {
+    final cs = Theme.of(context).colorScheme;
+    if (_activityLoading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: cs.primary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final events = _recentActivity.take(4).toList();
+    if (events.isEmpty) {
+      return _buildRecentActivityEmpty(theme, cs);
+    }
+
     return Column(
-      children: [
-        ActivityTile(
-          icon: Icons.location_on_rounded,
-          iconColor: Theme.of(context).colorScheme.primary,
-          title: 'Sarah arrived home',
-          subtitle: '123 Main St, New York',
-          time: '10m ago',
+      children: events.map((e) {
+        return ActivityTile(
+          icon: _activityIcon(e.type),
+          iconColor: _activityColor(e.type, cs),
+          title: _activityTitle(e),
+          subtitle: e.detail,
+          time: formatActivityTime(e.timestamp),
           onTap: () => context.push('/history'),
-        ),
-        ActivityTile(
-          icon: Icons.check_circle_rounded,
-          iconColor: AppTheme.success,
-          title: 'James checked in',
-          subtitle: 'Central Park, NYC',
-          time: '25m ago',
-          onTap: () => context.push('/history'),
-        ),
-        ActivityTile(
-          icon: Icons.warning_amber_rounded,
-          iconColor: AppTheme.warning,
-          title: 'Low battery alert',
-          subtitle: 'Emma\'s phone at 15%',
-          time: '1h ago',
-          onTap: () => context.push('/history'),
-        ),
-        ActivityTile(
-          icon: Icons.login_rounded,
-          iconColor: Theme.of(context).colorScheme.tertiary,
-          title: 'You joined the circle',
-          subtitle: 'Welcome to GuardianCircle!',
-          time: '3h ago',
-          onTap: () => context.push('/history'),
-        ),
-      ],
+        );
+      }).toList(),
     );
+  }
+
+  Widget _buildRecentActivityEmpty(ThemeData theme, ColorScheme cs) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
+      decoration: BoxDecoration(
+        color: theme.brightness == Brightness.dark
+            ? Colors.white.withValues(alpha: 0.03)
+            : Colors.black.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.2),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.history_rounded,
+            size: 26,
+            color: cs.onSurface.withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'No recent family activity.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: cs.onSurface.withValues(alpha: 0.5),
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'SOS alerts and new family members will appear here.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: cs.onSurface.withValues(alpha: 0.35),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _activityIcon(FamilyActivityType type) {
+    switch (type) {
+      case FamilyActivityType.sosCreated:
+        return Icons.warning_amber_rounded;
+      case FamilyActivityType.sosCancelled:
+        return Icons.check_circle_rounded;
+      case FamilyActivityType.memberJoined:
+        return Icons.person_add_alt_1_rounded;
+    }
+  }
+
+  Color _activityColor(FamilyActivityType type, ColorScheme cs) {
+    switch (type) {
+      case FamilyActivityType.sosCreated:
+        return AppTheme.danger;
+      case FamilyActivityType.sosCancelled:
+        return AppTheme.success;
+      case FamilyActivityType.memberJoined:
+        return cs.primary;
+    }
+  }
+
+  String _activityTitle(FamilyActivityEvent event) {
+    switch (event.type) {
+      case FamilyActivityType.sosCreated:
+        return '${event.memberName} sent an SOS alert';
+      case FamilyActivityType.sosCancelled:
+        return '${event.memberName} cancelled an SOS alert';
+      case FamilyActivityType.memberJoined:
+        return '${event.memberName} joined the family';
+    }
   }
 
   void _showSosConfirmation(BuildContext context, ThemeData theme) {
@@ -883,8 +1258,20 @@ class _FamilyMember {
   final String name;
   final String role;
   final Color color;
+  final String? photoUrl;
+  final bool isOwner;
   final bool isOnline;
-  const _FamilyMember(this.name, this.role, this.color, this.isOnline);
+  final String userId;
+
+  const _FamilyMember({
+    required this.name,
+    required this.role,
+    required this.color,
+    this.photoUrl,
+    required this.isOwner,
+    required this.isOnline,
+    required this.userId,
+  });
 }
 
 class _MapGridPainter extends CustomPainter {

@@ -1,11 +1,197 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/models/family_member_location.dart';
+import 'package:guardiancircle/models/self_location_info.dart';
+import 'package:guardiancircle/services/activity_service.dart';
+import 'package:guardiancircle/services/family_location_cache_service.dart';
+import 'package:guardiancircle/services/family_service.dart';
+import 'package:guardiancircle/services/location_tracking_service.dart';
+import 'package:guardiancircle/services/supabase_service.dart';
 import 'package:guardiancircle/shared/widgets/glass_card.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
 
-class LocationDetailsScreen extends StatelessWidget {
+class LocationDetailsScreen extends StatefulWidget {
   const LocationDetailsScreen({super.key});
+
+  @override
+  State<LocationDetailsScreen> createState() => _LocationDetailsScreenState();
+}
+
+class _LocationDetailsScreenState extends State<LocationDetailsScreen> {
+  static const List<Color> _memberColors = [
+    Color(0xFF3B82F6),
+    Color(0xFFEC4899),
+    Color(0xFF8B5CF6),
+    Color(0xFFF59E0B),
+    Color(0xFF06B6D4),
+    Color(0xFFEF4444),
+    Color(0xFF14B8A6),
+    Color(0xFF10B981),
+  ];
+
+  SelfLocationInfo? _selfLocation;
+  bool _locationLoading = true;
+  List<FamilyMemberLocation> _nearbyMembers = [];
+  bool _nearbyLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocation();
+    _loadNearbyFamily();
+  }
+
+  Future<void> _loadLocation() async {
+    final info = await LocationTrackingService.instance.loadSelfLocationInfo();
+    if (!mounted) return;
+    setState(() {
+      _selfLocation = info;
+      _locationLoading = false;
+    });
+  }
+
+  Future<void> _loadNearbyFamily() async {
+    String? familyId;
+    List<FamilyMemberLocation> members = [];
+    try {
+      final families = await FamilyService.defaultClient().fetchFamilies();
+      if (families.isNotEmpty) {
+        familyId = families.first.id;
+        members = await _fetchMemberLocations(familyId);
+        if (members.isNotEmpty) {
+          FamilyLocationCacheService.instance
+              .saveFamilyMemberLocations(familyId, members);
+        }
+      }
+    } catch (_) {
+      if (familyId != null) {
+        members = FamilyLocationCacheService.instance
+            .loadCachedFamilyMemberLocations(familyId);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _nearbyMembers = members;
+      _nearbyLoading = false;
+    });
+  }
+
+  Future<List<FamilyMemberLocation>> _fetchMemberLocations(
+    String familyId,
+  ) async {
+    final supabase = SupabaseService.client;
+    final currentUserId = supabase.auth.currentUser?.id;
+
+    final memberRows = await supabase
+        .from('family_members')
+        .select('user_id, role')
+        .eq('family_id', familyId);
+    final memberList = List<Map<String, dynamic>>.from(memberRows as List);
+    if (memberList.isEmpty) return [];
+
+    final userIds = memberList.map((r) => r['user_id'] as String).toList();
+
+    final locationMap = <String, Map<String, dynamic>>{};
+    try {
+      final locationRows = await supabase
+          .from('user_locations')
+          .select('user_id, latitude, longitude, updated_at')
+          .inFilter('user_id', userIds);
+      final locList = List<Map<String, dynamic>>.from(locationRows as List);
+      for (final row in locList) {
+        locationMap[row['user_id'] as String] = row;
+      }
+    } catch (_) {}
+
+    final profileMap = <String, Map<String, dynamic>>{};
+    try {
+      final profileRows = await supabase
+          .from('profiles')
+          .select('id, name, photo_url')
+          .inFilter('id', userIds);
+      final pList = List<Map<String, dynamic>>.from(profileRows as List);
+      for (final row in pList) {
+        profileMap[row['id'] as String] = row;
+      }
+    } catch (_) {}
+
+    final privacyHidden = <String, bool>{};
+    try {
+      final privacyRows = await supabase
+          .from('privacy_settings')
+          .select('user_id, invisible_mode')
+          .inFilter('user_id', userIds);
+      final pList = List<Map<String, dynamic>>.from(privacyRows as List);
+      for (final row in pList) {
+        privacyHidden[row['user_id'] as String] =
+            row['invisible_mode'] as bool? ?? false;
+      }
+    } catch (_) {}
+
+    final result = <FamilyMemberLocation>[];
+    for (var i = 0; i < memberList.length; i++) {
+      final m = memberList[i];
+      final uid = m['user_id'] as String;
+      if (uid == currentUserId) continue;
+      if (privacyHidden[uid] == true) continue;
+      final loc = locationMap[uid];
+      if (loc == null) continue;
+      final lat = loc['latitude'];
+      final lng = loc['longitude'];
+      if (lat == null || lng == null) continue;
+      final profile = profileMap[uid];
+      final isOwner = m['role'] == 'owner';
+      result.add(FamilyMemberLocation(
+        userId: uid,
+        name: profile?['name'] as String? ?? 'Unknown',
+        role: isOwner ? 'Owner' : (m['role'] as String? ?? 'Member'),
+        photoUrl: profile?['photo_url'] as String?,
+        color: _memberColors[i % _memberColors.length],
+        latitude: (lat as num).toDouble(),
+        longitude: (lng as num).toDouble(),
+        lastUpdated: loc['updated_at'] != null
+            ? DateTime.parse(loc['updated_at'] as String)
+            : DateTime.now(),
+      ));
+    }
+    return result;
+  }
+
+  List<_NearbyFamilyMember> get _nearbyFamilyList {
+    final self = _selfLocation;
+    return _nearbyMembers
+        .where((m) => !m.isLocationHidden)
+        .map((m) => _NearbyFamilyMember(
+              m.name,
+              m.role,
+              m.color,
+              self != null
+                  ? Geolocator.distanceBetween(
+                      self.position.latitude,
+                      self.position.longitude,
+                      m.latitude,
+                      m.longitude,
+                    )
+                  : null,
+            ))
+        .toList()
+      ..sort((a, b) {
+        final da = a.distanceMeters;
+        final db = b.distanceMeters;
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return da.compareTo(db);
+      });
+  }
+
+  String _formatDistance(double meters) {
+    if (meters < 161) return '<0.1 mi';
+    return '${(meters / 1609.344).toStringAsFixed(1)} mi';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -13,6 +199,48 @@ class LocationDetailsScreen extends StatelessWidget {
     final cs = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final ext = theme.extension<AppThemeExtension>();
+
+    final String addressValue;
+    final String areaValue;
+    final String coordinatesValue;
+    final String updatedValue;
+    final String accuracyValue;
+    if (_locationLoading) {
+      addressValue = 'Loading…';
+      areaValue = 'Loading…';
+      coordinatesValue = 'Loading…';
+      updatedValue = 'Loading…';
+      accuracyValue = 'Loading…';
+    } else if (_selfLocation == null) {
+      addressValue = 'Location unavailable';
+      areaValue = 'Location unavailable';
+      coordinatesValue = 'Location unavailable';
+      updatedValue = 'Location unavailable';
+      accuracyValue = 'Location unavailable';
+    } else {
+      final self = _selfLocation!;
+      addressValue = self.address;
+      areaValue = self.area;
+      coordinatesValue = self.coordinates;
+      updatedValue = 'Updated ${formatActivityTime(self.position.timestamp)}';
+      accuracyValue = self.accuracyLabel;
+    }
+
+    final String statusLabel;
+    final Color statusColor;
+    if (_locationLoading) {
+      statusLabel = 'Loading';
+      statusColor = cs.onSurface;
+    } else if (_selfLocation == null) {
+      statusLabel = 'Unavailable';
+      statusColor = AppTheme.danger;
+    } else if (_selfLocation!.fromCache) {
+      statusLabel = 'Cached';
+      statusColor = AppTheme.warning;
+    } else {
+      statusLabel = 'Live';
+      statusColor = AppTheme.success;
+    }
 
     return Scaffold(
       body: Container(
@@ -79,7 +307,13 @@ class LocationDetailsScreen extends StatelessWidget {
                   delay: const Duration(milliseconds: 100),
                   duration: const Duration(milliseconds: 500),
                   beginOffset: const Offset(0, 0.1),
-                  child: _MapPreview(isDark: isDark, cs: cs, theme: theme),
+                  child: _MapPreview(
+                    isDark: isDark,
+                    cs: cs,
+                    theme: theme,
+                    statusLabel: statusLabel,
+                    statusColor: statusColor,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 FadeIn(
@@ -92,35 +326,35 @@ class LocationDetailsScreen extends StatelessWidget {
                         _DetailRow(
                           icon: Icons.place_rounded,
                           label: 'Address',
-                          value: '123 Main St, New York, NY',
+                          value: addressValue,
                           color: cs.primary,
                         ),
                         Divider(color: cs.outline.withValues(alpha: 0.2)),
                         _DetailRow(
                           icon: Icons.location_city_rounded,
                           label: 'Area',
-                          value: 'Downtown, NYC',
+                          value: areaValue,
                           color: cs.secondary,
                         ),
                         Divider(color: cs.outline.withValues(alpha: 0.2)),
                         _DetailRow(
                           icon: Icons.map_rounded,
                           label: 'Coordinates',
-                          value: '40.7128\u00b0 N, 74.0060\u00b0 W',
+                          value: coordinatesValue,
                           color: AppTheme.tertiary,
                         ),
                         Divider(color: cs.outline.withValues(alpha: 0.2)),
                         _DetailRow(
                           icon: Icons.access_time_rounded,
                           label: 'Last Updated',
-                          value: '2 minutes ago',
+                          value: updatedValue,
                           color: AppTheme.warning,
                         ),
                         Divider(color: cs.outline.withValues(alpha: 0.2)),
                         _DetailRow(
                           icon: Icons.speed_rounded,
                           label: 'Accuracy',
-                          value: 'High (10m)',
+                          value: accuracyValue,
                           color: AppTheme.success,
                         ),
                       ],
@@ -143,19 +377,7 @@ class LocationDetailsScreen extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 14),
-                        _NearbyMember(
-                          name: 'Sarah Miller',
-                          relation: 'Mom',
-                          color: const Color(0xFFEC4899),
-                          distance: '0.3 mi',
-                        ),
-                        const SizedBox(height: 10),
-                        _NearbyMember(
-                          name: 'James Miller',
-                          relation: 'Dad',
-                          color: const Color(0xFF3B82F6),
-                          distance: '1.2 mi',
-                        ),
+                        _buildNearbyFamily(theme, cs),
                       ],
                     ),
                   ),
@@ -168,17 +390,102 @@ class LocationDetailsScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildNearbyFamily(ThemeData theme, ColorScheme cs) {
+    if (_nearbyLoading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: cs.primary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final nearby = _nearbyFamilyList;
+    if (nearby.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          children: [
+            Icon(
+              Icons.people_outline_rounded,
+              size: 26,
+              color: cs.onSurface.withValues(alpha: 0.3),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'No nearby family members found.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface.withValues(alpha: 0.5),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Family member locations will appear here.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: cs.onSurface.withValues(alpha: 0.35),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        for (var i = 0; i < nearby.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          _NearbyMember(
+            name: nearby[i].name,
+            relation: nearby[i].relation,
+            color: nearby[i].color,
+            distance: nearby[i].distanceMeters != null
+                ? _formatDistance(nearby[i].distanceMeters!)
+                : '--',
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _NearbyFamilyMember {
+  final String name;
+  final String relation;
+  final Color color;
+  final double? distanceMeters;
+
+  const _NearbyFamilyMember(
+    this.name,
+    this.relation,
+    this.color,
+    this.distanceMeters,
+  );
 }
 
 class _MapPreview extends StatelessWidget {
   final bool isDark;
   final ColorScheme cs;
   final ThemeData theme;
+  final String statusLabel;
+  final Color statusColor;
 
   const _MapPreview({
     required this.isDark,
     required this.cs,
     required this.theme,
+    required this.statusLabel,
+    required this.statusColor,
   });
 
   @override
@@ -274,13 +581,13 @@ class _MapPreview extends StatelessWidget {
                       Icon(
                         Icons.location_on,
                         size: 14,
-                        color: cs.primary,
+                        color: statusColor,
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        'Live',
+                        statusLabel,
                         style: theme.textTheme.labelSmall?.copyWith(
-                          color: AppTheme.success,
+                          color: statusColor,
                           fontWeight: FontWeight.w700,
                           fontSize: 11,
                         ),

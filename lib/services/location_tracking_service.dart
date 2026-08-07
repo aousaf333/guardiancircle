@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui' show Color;
 import 'package:flutter/foundation.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:guardiancircle/models/self_location_info.dart';
+import 'package:guardiancircle/services/local_storage_service.dart';
 import 'package:guardiancircle/services/offline_location_sync_service.dart';
 import 'package:guardiancircle/services/supabase_service.dart';
 
@@ -37,7 +40,23 @@ class LocationTrackingService {
   static const double _historyMinDistanceMeters = 25;
   static const Duration _historyMinTimeBetweenUpdates = Duration(minutes: 2);
 
+  /// Hive box + key used to persist the last real self location so it can be
+  /// shown while offline or when a fresh fix cannot be obtained.
+  static const String _selfLocationBoxName = 'cached_locations';
+  static const String _selfLocationKey = 'self_current_location';
+  static const double _cacheMinDistanceMeters = 25;
+  static const Duration _cacheMinTimeBetweenUpdates = Duration(minutes: 2);
+
+  /// The most recent position received from the GPS stream, if any.
+  Position? _lastPosition;
+  double _lastCachedSelfLat = 0;
+  double _lastCachedSelfLng = 0;
+  DateTime? _lastCachedSelfTime;
+
   bool get isTracking => _positionSubscription != null;
+
+  /// The most recent live position received from the GPS stream, if any.
+  Position? get lastKnownPosition => _lastPosition;
 
   Stream<Position> get positionStream {
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -111,6 +130,8 @@ class LocationTrackingService {
     void Function(Position position)? onPositionUpdate,
   ) {
     print('[BackgroundTracking] Location received');
+    _lastPosition = position;
+    _maybeCacheSelfPosition(position);
     if (!locationSharingEnabled || !uploadLocationsToServer) {
       onPositionUpdate?.call(position);
       return;
@@ -217,6 +238,131 @@ class LocationTrackingService {
   }
 
   double _toRadians(double degree) => degree * pi / 180;
+
+  // ---------------------------------------------------------------------------
+  // Self location (home screen / location details)
+  // ---------------------------------------------------------------------------
+
+  /// Fetches the current GPS position, returning `null` when unavailable.
+  ///
+  /// A successful fix is mirrored into the local self-location cache so it can
+  /// be shown as the last known real location while offline.
+  Future<Position?> getCurrentPositionOrNull() async {
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      _cacheSelfPosition(position);
+      return position;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Resolves [latitude]/[longitude] to a [Placemark] using the platform
+  /// geocoder, or `null` when no placemark can be determined.
+  Future<Placemark?> reverseGeocode(double latitude, double longitude) async {
+    try {
+      final placemarks = await placemarkFromCoordinates(latitude, longitude);
+      return placemarks.isEmpty ? null : placemarks.first;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Loads the last real self location persisted to Hive, or `null` when no
+  /// cached fix exists.
+  Future<Position?> loadCachedSelfLocation() async {
+    try {
+      final box = LocalStorageService.instance.box(_selfLocationBoxName);
+      if (box == null) return null;
+      final raw = box.get(_selfLocationKey);
+      if (raw is! Map) return null;
+      final latitude = raw['latitude'];
+      final longitude = raw['longitude'];
+      if (latitude == null || longitude == null) return null;
+      return Position(
+        latitude: (latitude as num).toDouble(),
+        longitude: (longitude as num).toDouble(),
+        timestamp: DateTime.tryParse(raw['timestamp'] as String? ?? '') ??
+            DateTime.now(),
+        accuracy: (raw['accuracy'] as num?)?.toDouble() ?? 0,
+        altitude: (raw['altitude'] as num?)?.toDouble() ?? 0,
+        altitudeAccuracy: 0,
+        heading: (raw['heading'] as num?)?.toDouble() ?? 0,
+        headingAccuracy: 0,
+        speed: (raw['speed'] as num?)?.toDouble() ?? 0,
+        speedAccuracy: 0,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Returns the current real location with an optional reverse-geocoded
+  /// placemark, or `null` when the location is unavailable (permission denied,
+  /// GPS failure with no cached fix).
+  ///
+  /// Falls back to the last cached self location when a fresh GPS fix cannot
+  /// be obtained.
+  Future<SelfLocationInfo?> loadSelfLocationInfo() async {
+    if (!await checkAndRequestPermission()) return null;
+
+    Position? position = await getCurrentPositionOrNull();
+    final fromCache = position == null;
+    position ??= await loadCachedSelfLocation();
+    if (position == null) return null;
+
+    final placemark = await reverseGeocode(
+      position.latitude,
+      position.longitude,
+    );
+    return SelfLocationInfo(
+      position: position,
+      placemark: placemark,
+      fromCache: fromCache,
+    );
+  }
+
+  void _maybeCacheSelfPosition(Position position) {
+    final now = DateTime.now();
+    final distance = _calculateDistance(
+      _lastCachedSelfLat,
+      _lastCachedSelfLng,
+      position.latitude,
+      position.longitude,
+    );
+    final timeSince = _lastCachedSelfTime != null
+        ? now.difference(_lastCachedSelfTime!)
+        : _cacheMinTimeBetweenUpdates;
+    if (distance < _cacheMinDistanceMeters &&
+        timeSince < _cacheMinTimeBetweenUpdates) {
+      return;
+    }
+    _lastCachedSelfLat = position.latitude;
+    _lastCachedSelfLng = position.longitude;
+    _lastCachedSelfTime = now;
+    _cacheSelfPosition(position);
+  }
+
+  Future<void> _cacheSelfPosition(Position position) async {
+    try {
+      final box = LocalStorageService.instance.box(_selfLocationBoxName);
+      if (box == null) return;
+      await box.put(_selfLocationKey, {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy': position.accuracy,
+        'altitude': position.altitude,
+        'speed': position.speed,
+        'heading': position.heading,
+        'timestamp': position.timestamp.toUtc().toIso8601String(),
+      });
+    } catch (_) {}
+  }
 
   void stopTracking() {
     _positionSubscription?.cancel();

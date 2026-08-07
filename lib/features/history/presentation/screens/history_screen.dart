@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:guardiancircle/core/theme/app_theme.dart';
+import 'package:guardiancircle/services/activity_service.dart';
 import 'package:guardiancircle/shared/widgets/slide_in_animation.dart';
 import 'package:guardiancircle/shared/widgets/app_bar_icon_button.dart';
 import 'package:guardiancircle/shared/widgets/empty_state.dart';
@@ -24,106 +25,18 @@ class _HistoryScreenState extends State<HistoryScreen>
   int _selectedFilter = 0;
   static const _filters = ['All', 'Today', 'This Week', 'This Month'];
 
-  final _events = const [
-    _HistoryEvent(
-      type: _EventType.arrival,
-      memberName: 'Sarah Miller',
-      memberColor: Color(0xFFEC4899),
-      title: 'Arrived at Home',
-      subtitle: '123 Main St, New York, NY',
-      time: '10 minutes ago',
-      date: 'Today',
-    ),
-    _HistoryEvent(
-      type: _EventType.departure,
-      memberName: 'James Miller',
-      memberColor: Color(0xFF3B82F6),
-      title: 'Left Office',
-      subtitle: '456 Park Ave, New York, NY',
-      time: '35 minutes ago',
-      date: 'Today',
-    ),
-    _HistoryEvent(
-      type: _EventType.arrival,
-      memberName: 'Emma Miller',
-      memberColor: Color(0xFF8B5CF6),
-      title: 'Arrived at School',
-      subtitle: '789 Broadway, New York, NY',
-      time: '2 hours ago',
-      date: 'Today',
-    ),
-    _HistoryEvent(
-      type: _EventType.sos,
-      memberName: 'You',
-      memberColor: AppTheme.primary,
-      title: 'SOS Alert Sent',
-      subtitle: 'Emergency alert to all members',
-      time: '3 hours ago',
-      date: 'Today',
-    ),
-    _HistoryEvent(
-      type: _EventType.departure,
-      memberName: 'Sarah Miller',
-      memberColor: Color(0xFFEC4899),
-      title: 'Left Home',
-      subtitle: '123 Main St, New York, NY',
-      time: '6 hours ago',
-      date: 'Today',
-    ),
-    _HistoryEvent(
-      type: _EventType.arrival,
-      memberName: 'James Miller',
-      memberColor: Color(0xFF3B82F6),
-      title: 'Arrived at Office',
-      subtitle: '456 Park Ave, New York, NY',
-      time: '9:15 AM',
-      date: 'Today',
-    ),
-    _HistoryEvent(
-      type: _EventType.departure,
-      memberName: 'Emma Miller',
-      memberColor: Color(0xFF8B5CF6),
-      title: 'Left Home',
-      subtitle: '123 Main St, New York, NY',
-      time: '8:30 AM',
-      date: 'Today',
-    ),
-    _HistoryEvent(
-      type: _EventType.arrival,
-      memberName: 'Sarah Miller',
-      memberColor: Color(0xFFEC4899),
-      title: 'Arrived at Gym',
-      subtitle: '321 Fitness Blvd, New York, NY',
-      time: '7:45 AM',
-      date: 'Yesterday',
-    ),
-    _HistoryEvent(
-      type: _EventType.sos,
-      memberName: 'James Miller',
-      memberColor: Color(0xFF3B82F6),
-      title: 'SOS Alert Sent',
-      subtitle: 'False alarm - resolved',
-      time: '4:20 PM',
-      date: 'Yesterday',
-    ),
-    _HistoryEvent(
-      type: _EventType.departure,
-      memberName: 'You',
-      memberColor: AppTheme.primary,
-      title: 'Left Coffee Shop',
-      subtitle: '88 Bean St, New York, NY',
-      time: '2:00 PM',
-      date: 'Yesterday',
-    ),
-    _HistoryEvent(
-      type: _EventType.arrival,
-      memberName: 'Emma Miller',
-      memberColor: Color(0xFF8B5CF6),
-      title: 'Arrived at Library',
-      subtitle: '555 Book Ln, New York, NY',
-      time: '11:00 AM',
-      date: 'Yesterday',
-    ),
+  List<FamilyActivityEvent> _events = [];
+  bool _isLoading = true;
+
+  static const List<Color> _memberColors = [
+    Color(0xFF3B82F6),
+    Color(0xFFEC4899),
+    Color(0xFF8B5CF6),
+    Color(0xFFF59E0B),
+    Color(0xFF06B6D4),
+    Color(0xFFEF4444),
+    Color(0xFF14B8A6),
+    Color(0xFFF97316),
   ];
 
   @override
@@ -144,6 +57,7 @@ class _HistoryScreenState extends State<HistoryScreen>
     _slideIns = StaggeredSlideIns(controller: _slideController, count: 10);
     _fadeController.forward();
     _slideController.forward();
+    _loadActivity();
   }
 
   @override
@@ -154,27 +68,67 @@ class _HistoryScreenState extends State<HistoryScreen>
     super.dispose();
   }
 
-  List<_HistoryEvent> get _filteredEvents {
-    var events = _events;
-    if (_searchQuery.isNotEmpty) {
-      events = events
-          .where(
-            (e) =>
-                e.memberName
-                    .toLowerCase()
-                    .contains(_searchQuery.toLowerCase()) ||
-                e.title.toLowerCase().contains(_searchQuery.toLowerCase()),
-          )
-          .toList();
+  Future<void> _loadActivity() async {
+    try {
+      final events = await ActivityService.defaultClient().fetchActivityEvents();
+      if (!mounted) return;
+      setState(() {
+        _events = events;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('[Activity] Failed to load activity: $e');
+      if (!mounted) return;
+      setState(() => _isLoading = false);
     }
-    if (_selectedFilter == 1) {
-      events = events.where((e) => e.date == 'Today').toList();
-    }
-    return events;
+  }
+
+  Color _memberColor(String id) {
+    final index = id.hashCode.abs() % _memberColors.length;
+    return _memberColors[index];
+  }
+
+  List<FamilyActivityEvent> get _filteredEvents {
+    final now = DateTime.now();
+    final query = _searchQuery.trim().toLowerCase();
+    return _events.where((e) {
+      if (query.isNotEmpty) {
+        final searchable =
+            '${e.memberName} ${e.detail} ${_eventTitle(e)}'.toLowerCase();
+        if (!searchable.contains(query)) return false;
+      }
+      switch (_selectedFilter) {
+        case 1:
+          return isSameActivityDay(e.timestamp, now);
+        case 2:
+          return e.timestamp.isAfter(
+            now.subtract(const Duration(days: 7)),
+          );
+        case 3:
+          return e.timestamp.isAfter(
+            now.subtract(const Duration(days: 30)),
+          );
+      }
+      return true;
+    }).toList();
   }
 
   List<String> get _dateGroups =>
-      _filteredEvents.map((e) => e.date).toSet().toList();
+      _filteredEvents
+          .map((e) => formatActivityDayLabel(e.timestamp))
+          .toSet()
+          .toList();
+
+  String _eventTitle(FamilyActivityEvent event) {
+    switch (event.type) {
+      case FamilyActivityType.sosCreated:
+        return 'SOS alert sent';
+      case FamilyActivityType.sosCancelled:
+        return 'SOS alert cancelled';
+      case FamilyActivityType.memberJoined:
+        return 'Joined the family';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -220,7 +174,9 @@ class _HistoryScreenState extends State<HistoryScreen>
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${_events.length} events recorded',
+                              _isLoading
+                                  ? 'Loading activity...'
+                                  : '${_events.length} events recorded',
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: cs.onSurface.withValues(alpha: 0.4),
                               ),
@@ -261,61 +217,92 @@ class _HistoryScreenState extends State<HistoryScreen>
                     child: _buildSummaryBar(cs, isDark),
                   ),
                 ),
-                for (var di = 0; di < _dateGroups.length; di++) ...[
+                if (_isLoading)
                   SliverToBoxAdapter(
-                    child: SlideInAnimation(
-                      animation: _slideIns.get(
-                        (di + 3).clamp(0, _slideIns.animations.length - 1),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                        child: Text(
-                          _dateGroups[di],
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: cs.onSurface.withValues(alpha: 0.45),
-                            letterSpacing: 0.5,
-                            fontSize: 13,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 60),
+                      child: Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: cs.primary,
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final dateEvents = _filteredEvents
-                            .where((e) => e.date == _dateGroups[di])
-                            .toList();
-                        return SlideInAnimation(
-                          animation: _slideIns.get(
-                            (di + index + 3)
-                                .clamp(0, _slideIns.animations.length - 1),
-                          ),
-                          child: _buildEventCard(
-                            dateEvents[index],
-                            theme,
-                            cs,
-                            isDark,
-                            index,
-                            dateEvents.length,
-                          ),
-                        );
-                      },
-                      childCount: _filteredEvents
-                          .where((e) => e.date == _dateGroups[di])
-                          .length,
+                  )
+                else if (_events.isEmpty)
+                  SliverToBoxAdapter(
+                    child: EmptyState(
+                      icon: Icons.history_rounded,
+                      title: 'No recent family activity.',
+                      subtitle:
+                          'SOS alerts and new family members will appear here.',
                     ),
-                  ),
-                ],
-                if (_filteredEvents.isEmpty)
+                  )
+                else if (_filteredEvents.isEmpty)
                   SliverToBoxAdapter(
                     child: EmptyState(
                       icon: Icons.history_rounded,
                       title: 'No events found',
                       subtitle: 'Try adjusting your search or filters',
                     ),
-                  ),
+                  )
+                else ...[
+                  for (var di = 0; di < _dateGroups.length; di++) ...[
+                    SliverToBoxAdapter(
+                      child: SlideInAnimation(
+                        animation: _slideIns.get(
+                          (di + 3).clamp(0, _slideIns.animations.length - 1),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                          child: Text(
+                            _dateGroups[di],
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: cs.onSurface.withValues(alpha: 0.45),
+                              letterSpacing: 0.5,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final dateEvents = _filteredEvents
+                              .where((e) =>
+                                  formatActivityDayLabel(e.timestamp) ==
+                                  _dateGroups[di])
+                              .toList();
+                          return SlideInAnimation(
+                            animation: _slideIns.get(
+                              (di + index + 3)
+                                  .clamp(0, _slideIns.animations.length - 1),
+                            ),
+                            child: _buildEventCard(
+                              dateEvents[index],
+                              theme,
+                              cs,
+                              isDark,
+                              index,
+                              dateEvents.length,
+                            ),
+                          );
+                        },
+                        childCount: _filteredEvents
+                            .where((e) =>
+                                formatActivityDayLabel(e.timestamp) ==
+                                _dateGroups[di])
+                            .length,
+                      ),
+                    ),
+                  ],
+                ],
                 const SliverToBoxAdapter(child: SizedBox(height: 100)),
               ],
             ),
@@ -459,37 +446,40 @@ class _HistoryScreenState extends State<HistoryScreen>
   }
 
   Widget _buildSummaryBar(ColorScheme cs, bool isDark) {
-    final arrivals =
-        _filteredEvents.where((e) => e.type == _EventType.arrival).length;
-    final departures =
-        _filteredEvents.where((e) => e.type == _EventType.departure).length;
-    final sos =
-        _filteredEvents.where((e) => e.type == _EventType.sos).length;
+    final sos = _filteredEvents
+        .where((e) =>
+            e.type == FamilyActivityType.sosCreated ||
+            e.type == FamilyActivityType.sosCancelled)
+        .length;
+    final members = _filteredEvents
+        .where((e) => e.type == FamilyActivityType.memberJoined)
+        .length;
+    final total = _filteredEvents.length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 4),
       child: Row(
         children: [
           _SummaryChip(
-            icon: Icons.login_rounded,
-            count: arrivals,
-            label: 'Arrivals',
-            color: AppTheme.success,
+            icon: Icons.warning_amber_rounded,
+            count: sos,
+            label: 'SOS',
+            color: AppTheme.danger,
             isDark: isDark,
           ),
           const SizedBox(width: 8),
           _SummaryChip(
-            icon: Icons.logout_rounded,
-            count: departures,
-            label: 'Departures',
+            icon: Icons.person_add_alt_1_rounded,
+            count: members,
+            label: 'Members',
             color: cs.primary,
             isDark: isDark,
           ),
           const SizedBox(width: 8),
           _SummaryChip(
-            icon: Icons.warning_amber_rounded,
-            count: sos,
-            label: 'SOS',
-            color: AppTheme.danger,
+            icon: Icons.history_rounded,
+            count: total,
+            label: 'Total',
+            color: AppTheme.success,
             isDark: isDark,
           ),
         ],
@@ -498,7 +488,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   }
 
   Widget _buildEventCard(
-    _HistoryEvent event,
+    FamilyActivityEvent event,
     ThemeData theme,
     ColorScheme cs,
     bool isDark,
@@ -507,13 +497,14 @@ class _HistoryScreenState extends State<HistoryScreen>
   ) {
     final isLast = index == totalForDate - 1;
     final typeData = _eventTypeData(event.type, cs);
+    final memberColor = _memberColor(event.memberId);
 
     return GestureDetector(
       onTap: () {
         HapticFeedback.lightImpact();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${event.title} - ${event.memberName}'),
+            content: Text('${event.memberName} - ${event.detail}'),
             duration: const Duration(seconds: 1),
           ),
         );
@@ -531,7 +522,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: typeData.color.withValues(alpha: isDark ? 0.15 : 0.1),
+                      color: typeData.color
+                          .withValues(alpha: isDark ? 0.15 : 0.1),
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: typeData.color.withValues(alpha: 0.3),
@@ -584,14 +576,14 @@ class _HistoryScreenState extends State<HistoryScreen>
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
-                                  event.memberColor,
-                                  event.memberColor.withValues(alpha: 0.6),
+                                  memberColor,
+                                  memberColor.withValues(alpha: 0.6),
                                 ],
                               ),
                               borderRadius: BorderRadius.circular(14),
                               boxShadow: [
                                 BoxShadow(
-                                  color: event.memberColor.withValues(alpha: 0.3),
+                                  color: memberColor.withValues(alpha: 0.3),
                                   blurRadius: 8,
                                   offset: const Offset(0, 3),
                                 ),
@@ -617,7 +609,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                                   children: [
                                     Flexible(
                                       child: Text(
-                                        event.title,
+                                        _eventTitle(event),
                                         style: theme.textTheme.titleSmall
                                             ?.copyWith(
                                           fontWeight: FontWeight.w700,
@@ -651,7 +643,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  event.subtitle,
+                                  event.detail,
                                   style: theme.textTheme.bodySmall?.copyWith(
                                     color: cs.onSurface.withValues(alpha: 0.4),
                                   ),
@@ -684,7 +676,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                                     const SizedBox(width: 3),
                                     Flexible(
                                       child: Text(
-                                        event.time,
+                                        formatActivityTime(event.timestamp),
                                         style: TextStyle(
                                           color: cs.onSurface.withValues(alpha: 0.35),
                                           fontWeight: FontWeight.w500,
@@ -716,57 +708,35 @@ class _HistoryScreenState extends State<HistoryScreen>
     );
   }
 
-  _TypeData _eventTypeData(_EventType type, ColorScheme cs) {
+  _TypeData _eventTypeData(FamilyActivityType type, ColorScheme cs) {
     switch (type) {
-      case _EventType.arrival:
-        return _TypeData(
-          icon: Icons.login_rounded,
-          color: AppTheme.success,
-          label: 'Arrival',
-        );
-      case _EventType.departure:
-        return _TypeData(
-          icon: Icons.logout_rounded,
-          color: cs.primary,
-          label: 'Departure',
-        );
-      case _EventType.sos:
+      case FamilyActivityType.sosCreated:
         return _TypeData(
           icon: Icons.warning_amber_rounded,
           color: AppTheme.danger,
           label: 'SOS',
         );
+      case FamilyActivityType.sosCancelled:
+        return _TypeData(
+          icon: Icons.check_circle_rounded,
+          color: AppTheme.success,
+          label: 'Resolved',
+        );
+      case FamilyActivityType.memberJoined:
+        return _TypeData(
+          icon: Icons.person_add_alt_1_rounded,
+          color: cs.primary,
+          label: 'Member',
+        );
     }
   }
 }
-
-enum _EventType { arrival, departure, sos }
 
 class _TypeData {
   final IconData icon;
   final Color color;
   final String label;
   const _TypeData({required this.icon, required this.color, required this.label});
-}
-
-class _HistoryEvent {
-  final _EventType type;
-  final String memberName;
-  final Color memberColor;
-  final String title;
-  final String subtitle;
-  final String time;
-  final String date;
-
-  const _HistoryEvent({
-    required this.type,
-    required this.memberName,
-    required this.memberColor,
-    required this.title,
-    required this.subtitle,
-    required this.time,
-    required this.date,
-  });
 }
 
 class _SummaryChip extends StatelessWidget {
